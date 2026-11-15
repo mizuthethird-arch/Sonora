@@ -1,0 +1,12 @@
+services:
+  workspace:
+    build:
+      context: .
+      target: workspace
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - workspace_node_modules:/workspace/node_modules
+
+volumes:
+  workspace_node_modules:
