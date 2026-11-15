@@ -49,12 +49,17 @@ file_has_lines() {
   done
 }
 
-compose_has_services() {
-  local services
-  services=$(docker compose --profile tools config --services)
-  for service in "$@"; do
-    grep -qx "$service" <<<"$services" || return 1
-  done
+compose_has_default_service() {
+  docker compose config --services | grep -qx "$1"
+}
+
+compose_has_tools_service() {
+  docker compose --profile tools config --services | grep -qx "$1"
+}
+
+compose_has_workspace_and_gitleaks() {
+  compose_has_default_service workspace || return 1
+  compose_has_tools_service gitleaks
 }
 
 bind_mount_only_in_override() {
@@ -62,10 +67,15 @@ bind_mount_only_in_override() {
   file_contains docker-compose.override.yml '.:/workspace'
 }
 
+line_after() {
+  local file="$1"
+  local line_start="$2"
+  awk -v wanted="$line_start" '$1 == wanted { found = 1; next } found { print; exit }' "$file"
+}
+
 workflow_trigger_has_branches() {
   local trigger="$1"
-  awk -v trigger="$trigger:" '$1 == trigger { found = 1; next } found { print; exit }' "$workflow" |
-    grep -Fq 'branches: [dev, main]'
+  line_after "$workflow" "$trigger:" | grep -Fq 'branches: [dev, main]'
 }
 
 workflow_pins_actions_to_sha() {
@@ -75,7 +85,7 @@ workflow_pins_actions_to_sha() {
 
 hook_scans_staged_changes() {
   [ -x .githooks/pre-commit ] || return 1
-  file_contains .githooks/pre-commit gitleaks -- --staged
+  file_contains .githooks/pre-commit gitleaks '--staged'
 }
 
 hook_setup_script_is_ready() {
@@ -88,7 +98,7 @@ hooks_are_activated() {
 }
 
 check "compose file is valid" docker compose config --quiet
-check "compose defines workspace and gitleaks services" compose_has_services workspace gitleaks
+check "compose defines workspace and gitleaks services" compose_has_workspace_and_gitleaks
 check "workspace image is pinned by version and digest" file_matches Dockerfile "$node_image_pattern"
 check "workspace container runs as a non-root user" file_has_lines Dockerfile 'USER node'
 check "gitleaks image is pinned by version and digest" file_matches docker-compose.yml "$gitleaks_image_pattern"

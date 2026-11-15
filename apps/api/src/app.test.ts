@@ -15,7 +15,8 @@ describe("GET /health", () => {
     const response = await request(createApp()).head("/health");
 
     expect(response.status).toBe(200);
-    expect(response.text ?? "").toBe("");
+    expect(response.text).toBeFalsy();
+    expect(response.body).toEqual({});
   });
 
   it("does not accept writes", async () => {
