@@ -28,7 +28,7 @@ check "pnpm version is pinned in package.json" bash -c "grep -Eq '\"packageManag
 check "ci script runs audit, lint, typecheck, test and build in order" bash -c "grep -Eq '\"ci\": \".*audit:dependencies.*lint.*typecheck.*test.*build' package.json"
 check "workspace declares apps and packages" bash -c "grep -q 'apps/\*' pnpm-workspace.yaml && grep -q 'packages/\*' pnpm-workspace.yaml"
 check "base compose has no bind mount, override adds it" bash -c "! grep -q '\.:/workspace' docker-compose.yml && grep -q '\.:/workspace' docker-compose.override.yml"
-check "dockerignore excludes dependencies, git data and secrets" bash -c "for entry in node_modules .git '.env*' .npmrc '*.pem' '*.key'; do grep -Fqx \"\$entry\" .dockerignore || exit 1; done"
+check "dockerignore excludes dependencies, git data and secrets" bash -c "for entry in '**/node_modules' .git '**/.env*' '**/.npmrc' '**/*.pem' '**/*.key' '**/dist' '**/coverage'; do grep -Fqx \"\$entry\" .dockerignore || exit 1; done"
 check "gitignore excludes env files and credentials" bash -c "for entry in '.env*' .npmrc '*.pem' '*.key'; do grep -Fqx \"\$entry\" .gitignore || exit 1; done"
 check "workflow runs on pull requests to dev and main" bash -c "tr '\n' ' ' < $workflow | grep -Eq 'pull_request:[[:space:]]+branches: \[dev, main\]'"
 check "workflow runs on pushes to dev and main" bash -c "tr '\n' ' ' < $workflow | grep -Eq 'push:[[:space:]]+branches: \[dev, main\]'"
@@ -38,7 +38,9 @@ check "workflow runs gitleaks and the pipeline through docker compose without th
 check "workflow pins actions to a commit sha" bash -c "grep -q 'uses: .*@[0-9a-f]\{40\}' $workflow && ! grep -E 'uses: .+@(v[0-9]|main|master|latest)' $workflow"
 check "workflow requests read-only permissions" bash -c "grep -q 'contents: read' $workflow"
 check "pre-commit hook scans staged changes for secrets" bash -c "test -x .githooks/pre-commit && grep -q 'gitleaks' .githooks/pre-commit && grep -q -- '--staged' .githooks/pre-commit"
-check "dependabot covers npm, docker and github-actions" bash -c "grep -q 'package-ecosystem: npm' .github/dependabot.yml && grep -q 'package-ecosystem: docker' .github/dependabot.yml && grep -q 'package-ecosystem: github-actions' .github/dependabot.yml"
+check "dependabot covers npm, docker, docker-compose and github-actions" bash -c "for ecosystem in npm docker docker-compose github-actions; do grep -Eq \"package-ecosystem: \$ecosystem\\$\" .github/dependabot.yml || exit 1; done"
+check "hook setup script exists and is executable" bash -c "test -x scripts/setup-hooks.sh && grep -q 'core.hooksPath .githooks' scripts/setup-hooks.sh"
+check "git hooks are activated (run scripts/setup-hooks.sh)" bash -c "test \"\$(git config core.hooksPath)\" = .githooks"
 check "secret scan finds no leaks" docker compose -f docker-compose.yml run --rm gitleaks
 check "pipeline command passes inside the workspace container as CI runs it" docker compose -f docker-compose.yml run --rm --build workspace pnpm run ci
 
