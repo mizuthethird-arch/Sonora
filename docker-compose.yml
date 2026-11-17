@@ -88,7 +88,7 @@ services:
       timeout: 3s
       retries: 20
 
-  # Same build as workspace. The source directory is mounted so that tsc --watch and node --watch see edits.
+  # Same build as workspace. The source mount for hot reload is in docker-compose.override.yml.
   api:
     build:
       context: .

@@ -14,3 +14,8 @@ packageExtensions:
   dependency-cruiser:
     peerDependencies:
       typescript: ">=5 <7"
+
+auditConfig:
+  ignoreGhsas:
+    # picomatch ReDoS, vulnerable <=4.0.7 with no patched version, reached only through dev tooling (vite, tinyglobby, typescript-eslint); remove this exception as soon as a patched picomatch is released.
+    - GHSA-fc5q-39xc-vjpf
