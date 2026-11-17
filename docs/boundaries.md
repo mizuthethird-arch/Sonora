@@ -64,15 +64,33 @@ import type { CatalogFacade } from "../../../modules/catalog/src/public/index.js
 import type { TrackId } from "../../../../packages/contracts/src/index.js";
 ```
 
-## no-circular-module-facades
+## no-module-imports-app
 
-Two module facades must not depend on each other, directly or through other facades. Share the type through `packages/contracts` or publish an event instead.
+A module never imports an app. Dependencies point from apps to modules to packages.
 
 **Bad**
 
 ```ts
-// modules/catalog/src/public/index.ts imports PlaybackFacade
-// modules/playback/src/public/index.ts imports CatalogFacade
+// modules/catalog/src/service.ts
+import { routes } from "../../../apps/api/src/routes.js";
+```
+
+**Good**
+
+```ts
+// apps/api/src/routes.ts
+import { registerCatalog } from "../../../modules/catalog/module.js";
+```
+
+## no-circular-module-facades
+
+Modules must not depend on each other in a cycle, directly or through their internals. Share the type through `packages/contracts` or publish an event instead.
+
+**Bad**
+
+```ts
+// modules/catalog/src/service.ts imports modules/playback/src/public
+// modules/playback/src/service.ts imports modules/catalog/src/public
 ```
 
 **Good**
@@ -84,7 +102,7 @@ import type { TrackId } from "../../../../packages/contracts/src/index.js";
 
 ## no-database-client-outside-infrastructure
 
-Database clients (`@prisma/client`, `@prisma/adapter-mariadb`, `mysql`, `mysql2`, `mariadb`, `knex`, `drizzle-orm`) are imported only inside `modules/<name>/src/infrastructure`, so a module owns its data. `apps/api/src/database` is a temporary exception: it holds the current Prisma setup until the schema moves into modules.
+Database clients (`@prisma/client`, `@prisma/adapter-mariadb`, `mysql`, `mysql2`, `mariadb`, `knex`, `drizzle-orm`) are imported only inside `modules/<name>/src/infrastructure`, so a module owns its data. The generated Prisma client (`generated/prisma`) counts as a database client. `apps/api/src/database` is a temporary exception: it holds the current Prisma setup until the schema moves into modules.
 
 **Bad**
 
@@ -117,3 +135,8 @@ export * from "./internal.js";
 export type { CatalogFacade } from "./facade.js";
 export { TrackAddedEventSchema } from "./events.js";
 ```
+
+## Limits
+
+- Only static imports are checked. A dynamic `import(name)` or `require(name)` with a variable cannot be resolved, so do not use it to reach another module.
+- The root `typescript` 6.0.3 exists only because dependency-cruiser needs a TypeScript with a JavaScript API, which TypeScript 7 does not ship. Do not bump it to 7 at the root.

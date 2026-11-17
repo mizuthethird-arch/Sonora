@@ -11,4 +11,4 @@ storeDir: node_modules/.pnpm-store
 packageExtensions:
   dependency-cruiser:
     peerDependencies:
-      typescript: "*"
+      typescript: ">=5 <7"

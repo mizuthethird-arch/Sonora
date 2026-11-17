@@ -171,7 +171,7 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-packageExtensionsChecksum: sha256-g0U2/rp6g1Uw4s8/eTKVLbUszT2QAnNvvTCzYTLaQvI=
+packageExtensionsChecksum: sha256-1+68JFHb/RaC3xvueBljmEnhz0yLDeItK42oQno+kbs=
 
 importers:
 
@@ -226,6 +226,9 @@ importers:
       '@types/node':
         specifier: 24.19.2
         version: 24.19.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
       vitest:
         specifier: 5.1.0
         version: 5.1.0(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(jiti@2.7.0))
@@ -1020,7 +1023,7 @@ packages:
     engines: {node: ^22||^24||>=26}
     hasBin: true
     peerDependencies:
-      typescript: '*'
+      typescript: '>=5 <7'
 
   destr@2.0.5:
     resolution: {integrity: sha512-ugFTXCtDZunbzasqBxrK93Ik/DRYsO6S/fedkWEMKqt04xZ4csmnmwGDBAb07QWNaGMAmnTIemsYZCksjATwsA==}

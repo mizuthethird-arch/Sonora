@@ -25,7 +25,8 @@ function describeForbiddenExports(statement: ts.Statement): string[] {
     return [];
   }
   if (ts.isVariableStatement(statement)) {
-    return statement.declarationList.declarations.map((declaration) => declaration.name.getText()).filter(isNotEventSchema);
+    const names = statement.declarationList.declarations.map((declaration) => declaration.name.getText());
+    return names.filter(isNotEventSchema);
   }
   return [`${ts.SyntaxKind[statement.kind]} export`];
 }
@@ -39,7 +40,9 @@ function forbiddenInExportDeclaration(declaration: ts.ExportDeclaration): string
   if (!clause || ts.isNamespaceExport(clause)) {
     return ["star re-export"];
   }
-  return clause.elements.filter((element) => !element.isTypeOnly).map((element) => element.name.text).filter(isNotEventSchema);
+  const valueElements = clause.elements.filter((element) => !element.isTypeOnly);
+  const exportedNames = valueElements.map((element) => (element.propertyName ?? element.name).text);
+  return exportedNames.filter(isNotEventSchema);
 }
 
 function isExported(statement: ts.Statement): boolean {

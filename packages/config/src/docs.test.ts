@@ -8,6 +8,7 @@ type Rule = { name: string; comment: string };
 const require = createRequire(import.meta.url);
 const rules = (require("../boundaries.cjs") as { forbidden: Rule[] }).forbidden;
 const documentation = readFileSync(fileURLToPath(new URL("../../../docs/boundaries.md", import.meta.url)), "utf8");
+const FENCES_FOR_ONE_BAD_AND_ONE_GOOD_EXAMPLE = 4;
 const sections = documentation.split(/^## /m).slice(1);
 
 function sectionOf(ruleName: string): string {
@@ -24,7 +25,7 @@ describe.each(rules)("rule $name", (rule) => {
 
     expect(section).toContain("**Bad**");
     expect(section).toContain("**Good**");
-    expect(section.match(/```/g)).toHaveLength(4);
+    expect(section.match(/```/g)).toHaveLength(FENCES_FOR_ONE_BAD_AND_ONE_GOOD_EXAMPLE);
   });
 
   it("is linked from its failure message", () => {
