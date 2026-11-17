@@ -228,6 +228,43 @@ audit_exception_is_explained_inline() {
   [ -n "$comments" ]
 }
 
+module_db_check_skips_env_sourcing() {
+  local script=scripts/check-module-databases.sh
+  file_lacks "$script" '. "./$ENV_FILE"' || return 1
+  ! grep -Eq '^[[:space:]]*(\.|source)[[:space:]]+.*\.env' "$script" || return 1
+  file_contains "$script" MYSQL_PWD
+}
+
+module_db_check_keeps_password_off_argv() {
+  file_lacks scripts/check-module-databases.sh '-p"$MODULE_DB_PASSWORD"'
+}
+
+api_dev_script_has_comments() {
+  local script=apps/api/scripts/dev.sh comment_count
+  [ -f "$script" ] || return 1
+  file_contains "$script" tsc 'node --watch' || return 1
+  comment_count=$(grep -v '^#!' "$script" | grep -c '^#' || true)
+  [ "$comment_count" -ge 2 ]
+}
+
+api_dev_runs_commented_script() {
+  file_contains apps/api/package.json '"dev": "sh scripts/dev.sh"' || return 1
+  api_dev_script_has_comments
+}
+
+makefile_marks_seed_credentials_as_dummies() {
+  grep -Eiq '^#.*dummy' Makefile
+}
+
+readme_line_has_both() {
+  grep -F -- "$1" README.md | grep -F -- "$2" >/dev/null
+}
+
+readme_explains_password_change_and_checksum_stop() {
+  readme_line_has_both MODULE_DB_PASSWORD 'make down-v' || return 1
+  readme_line_has_both checksum stops
+}
+
 check "compose file is valid" docker compose config --quiet
 check "compose defines workspace and gitleaks services" compose_has_workspace_and_gitleaks
 check "workspace image is pinned by version and digest" file_matches Dockerfile "$node_image_pattern"
@@ -287,6 +324,11 @@ check "api has a dev script for hot reload" file_contains apps/api/package.json 
 check "the pnpm audit ignores exactly one approved advisory" audit_ignores_only_the_approved_advisory
 check "the advisory exception is explained next to it" audit_exception_is_explained_inline
 check "the audit passes with the exception" docker compose run --rm --no-deps workspace pnpm audit --audit-level=high
+check "the module database check does not source .env" module_db_check_skips_env_sourcing
+check "the module database check does not put the password on the command line" module_db_check_keeps_password_off_argv
+check "the api dev script calls a small commented script" api_dev_runs_commented_script
+check "the Makefile marks the seed credentials as dummies" makefile_marks_seed_credentials_as_dummies
+check "the README explains password changes and the checksum stop" readme_explains_password_change_and_checksum_stop
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"
