@@ -12,6 +12,7 @@ const prisma = new PrismaClient({ adapter: new PrismaMariaDb(databaseUrl) });
 const UNIQUE_VIOLATION = { code: "P2002" };
 const FOREIGN_KEY_VIOLATION = { code: "P2003" };
 const VALUE_TOO_LONG = { code: "P2000" };
+const OUT_OF_RANGE = { code: "P2020" };
 const MISSING_ID = "00000000-0000-7000-8000-000000000000";
 const UUID_VERSION_7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const HOSTILE_TEXT = "🎵 Rós '; DROP TABLE User; -- <script>alert(1)</script>";
@@ -97,7 +98,11 @@ describe("users", () => {
   it("lets only one of two simultaneous sign-ups with the same email succeed", async () => {
     const attempts = await Promise.allSettled([createUser("race@example.com"), createUser("race@example.com")]);
 
+    const rejected = attempts.filter((attempt) => attempt.status === "rejected");
+
     expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject(UNIQUE_VIOLATION);
   });
 
   it("leaves nothing behind when a transaction fails half way", async () => {
@@ -292,7 +297,7 @@ describe("playlists", () => {
     const artist = await createArtist();
     const playlist = await createPlaylist((await createUser()).id);
 
-    await expect(addToPlaylist(playlist.id, (await createTrack(artist.id)).id, -1)).rejects.toThrow();
+    await expect(addToPlaylist(playlist.id, (await createTrack(artist.id)).id, -1)).rejects.toMatchObject(OUT_OF_RANGE);
   });
 
   it("keep one position per item", async () => {
@@ -362,6 +367,33 @@ describe("search", () => {
     `;
 
     expect(rows.map((row) => row.id)).toEqual([match.id]);
+  });
+});
+
+describe("text columns of 255 characters", () => {
+  const tooLong = "x".repeat(256);
+
+  it("reject an artist name that is too long", async () => {
+    await expect(createArtist("long-name", tooLong)).rejects.toMatchObject(VALUE_TOO_LONG);
+  });
+
+  it("reject an album title that is too long", async () => {
+    const artist = await createArtist();
+    const album = prisma.album.create({
+      data: { title: tooLong, artistId: artist.id, externalSource: "JAMENDO", externalId: "long-title" },
+    });
+
+    await expect(album).rejects.toMatchObject(VALUE_TOO_LONG);
+  });
+
+  it("reject a track title that is too long", async () => {
+    const artist = await createArtist();
+
+    await expect(createTrack(artist.id, "long-title", tooLong)).rejects.toMatchObject(VALUE_TOO_LONG);
+  });
+
+  it("reject an external id longer than 64 characters", async () => {
+    await expect(createArtist("e".repeat(65))).rejects.toMatchObject(VALUE_TOO_LONG);
   });
 });
 

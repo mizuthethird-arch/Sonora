@@ -22,6 +22,20 @@ describe("assertDisposableHost", () => {
     expect(() => assertDisposableHost(url)).toThrow("Refusing to run database tests");
   });
 
+  it.each([
+    ["a host option in the query", "mysql://root@mysql:3306/sonora?host=db.example.com"],
+    ["a socket option in the query", "mysql://root@mysql:3306/sonora?socketPath=/tmp/shared.sock"],
+    ["another protocol", "postgres://root@mysql:3306/sonora"],
+    ["a password", "mysql://root:secret@mysql:3306/sonora"],
+    ["a different host written as user", "mysql://mysql@db.example.com:3306/sonora"],
+  ])("refuses %s", (_name, url) => {
+    expect(() => assertDisposableHost(url)).toThrow("Refusing to run database tests");
+  });
+
+  it("accepts a user name that only looks like a host", () => {
+    expect(() => assertDisposableHost("mysql://db.example.com@mysql:3306/sonora")).not.toThrow();
+  });
+
   it("refuses text that is not a URL", () => {
     expect(() => assertDisposableHost("not a url")).toThrow("Refusing to run database tests");
   });
