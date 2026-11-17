@@ -11,6 +11,7 @@ function runBoundaryCheck(fixtureName: string): { status: number | null; output:
     ["exec", "depcruise", ".", "--config", boundaryConfig, "--output-type", "err-long"],
     { cwd: `${fixtureRoot}${fixtureName}`, encoding: "utf8" },
   );
+  expect(result.error).toBeUndefined();
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
 
@@ -72,5 +73,33 @@ describe("module boundaries", () => {
     const result = runBoundaryCheck("type-only-contracts-everywhere");
 
     expect(result.status).toBe(0);
+  });
+
+  it("fail when a cycle between two modules runs through their internals", () => {
+    const result = runBoundaryCheck("circular-through-internals");
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("no-circular-module-facades");
+  });
+
+  it("fail when the generated Prisma client is imported outside the database folder", () => {
+    const result = runBoundaryCheck("generated-client-outside-database");
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("no-database-client-outside-infrastructure");
+  });
+
+  it("fail when a folder named fixtures hides a module internals import", () => {
+    const result = runBoundaryCheck("fixtures-folder-does-not-hide-imports");
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("no-module-internals");
+  });
+
+  it("fail when a module imports an app", () => {
+    const result = runBoundaryCheck("module-imports-app");
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("no-module-imports-app");
   });
 });
