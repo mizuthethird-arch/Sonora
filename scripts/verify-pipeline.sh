@@ -210,6 +210,24 @@ make_up_stops_on_empty_key() {
   [ "$verdict" -eq 0 ] && grep -Fq MODULE_DB_PASSWORD <<<"$output"
 }
 
+approved_advisory='GHSA-fc5q-39xc-vjpf'
+ghsa_id_pattern='GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}'
+
+audit_ignores_only_the_approved_advisory() {
+  local count
+  file_contains pnpm-workspace.yaml "$approved_advisory" || return 1
+  count=$(grep -oE "$ghsa_id_pattern" pnpm-workspace.yaml | sort -u | wc -l | tr -d ' ')
+  [ "$count" -eq 1 ] || return 1
+  [ "$(grep -oE "$ghsa_id_pattern" pnpm-workspace.yaml | sort -u)" = "$approved_advisory" ]
+}
+
+audit_exception_is_explained_inline() {
+  local context comments
+  context=$(grep -B3 -- "$approved_advisory" pnpm-workspace.yaml) || return 1
+  comments=$(grep -E '#' <<<"$context" | grep -iw dev | grep -i remove) || return 1
+  [ -n "$comments" ]
+}
+
 check "compose file is valid" docker compose config --quiet
 check "compose defines workspace and gitleaks services" compose_has_workspace_and_gitleaks
 check "workspace image is pinned by version and digest" file_matches Dockerfile "$node_image_pattern"
@@ -266,6 +284,9 @@ check ".env.example exists with the required key empty" file_has_lines .env.exam
 check "check-env rejects a missing file, an empty required key, and accepts a filled one" check_env_rejects_bad_files
 check "make up stops on an empty required key" make_up_stops_on_empty_key
 check "api has a dev script for hot reload" file_contains apps/api/package.json '"dev":'
+check "the pnpm audit ignores exactly one approved advisory" audit_ignores_only_the_approved_advisory
+check "the advisory exception is explained next to it" audit_exception_is_explained_inline
+check "the audit passes with the exception" docker compose run --rm --no-deps workspace pnpm audit --audit-level=high
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"
