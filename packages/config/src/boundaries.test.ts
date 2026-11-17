@@ -47,4 +47,17 @@ describe("module boundaries", () => {
     expect(result.status).not.toBe(0);
     expect(result.output).toContain("no-package-imports-module-or-app");
   });
+
+  it("fail when a database client is imported outside the infrastructure folder", () => {
+    const result = runBoundaryCheck("database-client-outside-infrastructure");
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("no-database-client-outside-infrastructure");
+  });
+
+  it("pass when a database client is imported inside the infrastructure folder", () => {
+    const result = runBoundaryCheck("database-client-in-infrastructure");
+
+    expect(result.status).toBe(0);
+  });
 });
