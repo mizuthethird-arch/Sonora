@@ -90,7 +90,8 @@ hook_scans_staged_changes() {
 
 commit_msg_hook_runs_commitlint() {
   [ -x .githooks/commit-msg ] || return 1
-  file_contains .githooks/commit-msg 'commitlint' 'packages/config/commitlint.config.js'
+  file_contains .githooks/commit-msg 'pnpm run' 'commitlint' || return 1
+  file_matches package.json '"commitlint": ".*@sonora/config exec commitlint --config commitlint.config.js"'
 }
 
 hook_setup_script_is_ready() {

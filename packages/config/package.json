@@ -6,7 +6,8 @@
     "./eslint": "./eslint.config.js",
     "./prettier": "./prettier.config.js",
     "./tsconfig.base.json": "./tsconfig.base.json",
-    "./boundaries": "./boundaries.cjs"
+    "./boundaries": "./boundaries.cjs",
+    "./commitlint": "./commitlint.config.js"
   },
   "scripts": {
     "test": "vitest run",
