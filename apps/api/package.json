@@ -7,6 +7,7 @@
     "test": "pnpm run generate && vitest run",
     "typecheck": "pnpm run generate && tsc --noEmit",
     "build": "pnpm run generate && tsc -p tsconfig.build.json",
+    "dev": "sh scripts/dev.sh",
     "start": "node dist/index.js"
   },
   "dependencies": {
