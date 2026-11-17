@@ -10,8 +10,9 @@
     "typecheck": "pnpm -r --if-present run typecheck",
     "test": "pnpm -r --if-present run test",
     "build": "pnpm -r --if-present run build",
+    "check:boundaries": "depcruise . --config packages/config/boundaries.cjs --output-type err-long",
     "audit:dependencies": "pnpm audit --audit-level=high",
-    "ci": "pnpm run audit:dependencies && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build"
+    "ci": "pnpm run audit:dependencies && pnpm run lint && pnpm run check:boundaries && pnpm run typecheck && pnpm run test && pnpm run build"
   },
   "devDependencies": {
     "dependency-cruiser": "18.7.2",
