@@ -8,7 +8,26 @@ export function withDatabaseName(url: string, databaseName: string): string {
 }
 
 export function assertDisposableHost(url: string): void {
-  if (!URL.canParse(url) || !DISPOSABLE_HOSTS.includes(new URL(url).hostname)) {
+  const databaseUrl = parseUrl(url);
+
+  if (!databaseUrl || !isDisposable(databaseUrl)) {
     throw new Error(REFUSAL_MESSAGE);
   }
+}
+
+function parseUrl(url: string): URL | null {
+  try {
+    return new URL(url);
+  } catch {
+    return null;
+  }
+}
+
+function isDisposable(databaseUrl: URL): boolean {
+  return (
+    databaseUrl.protocol === "mysql:" &&
+    DISPOSABLE_HOSTS.includes(databaseUrl.hostname) &&
+    databaseUrl.password === "" &&
+    databaseUrl.search === ""
+  );
 }

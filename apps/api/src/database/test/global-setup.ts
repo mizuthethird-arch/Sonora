@@ -7,7 +7,7 @@ function runPrisma(args: string[], input?: string): void {
 }
 
 function dropDatabase(databaseName: string): void {
-  runPrisma(["db", "execute", "--stdin"], `DROP DATABASE \`${databaseName}\``);
+  runPrisma(["db", "execute", "--stdin"], `DROP DATABASE IF EXISTS \`${databaseName}\``);
 }
 
 function requireDatabaseUrl(): string {
@@ -19,20 +19,33 @@ function requireDatabaseUrl(): string {
   return url;
 }
 
+function migrateOrDrop(databaseName: string): void {
+  try {
+    runPrisma(["migrate", "deploy"]);
+  } catch (migrationError) {
+    throw dropAfterFailure(databaseName, migrationError);
+  }
+}
+
+function dropAfterFailure(databaseName: string, migrationError: unknown): unknown {
+  try {
+    dropDatabase(databaseName);
+  } catch (cleanupError) {
+    return new AggregateError([migrationError, cleanupError], "Migration failed and the database could not be dropped");
+  }
+  return migrationError;
+}
+
 /**
  * Gives every test run its own empty MySQL database with all migrations applied,
  * and drops it afterwards. The name is generated here from hex digits only.
  */
 export default function setup(): () => void {
   const databaseName = `sonora_test_${randomBytes(6).toString("hex")}`;
-  process.env["DATABASE_URL"] = withDatabaseName(requireDatabaseUrl(), databaseName);
+  const databaseUrl = withDatabaseName(requireDatabaseUrl(), databaseName);
+  process.env["DATABASE_URL"] = databaseUrl;
 
-  try {
-    runPrisma(["migrate", "deploy"]);
-  } catch (error) {
-    dropDatabase(databaseName);
-    throw error;
-  }
+  migrateOrDrop(databaseName);
 
   return () => dropDatabase(databaseName);
 }
