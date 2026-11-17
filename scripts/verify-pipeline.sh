@@ -50,11 +50,15 @@ file_has_lines() {
 }
 
 compose_has_default_service() {
-  docker compose config --services | grep -qx "$1"
+  local services
+  services=$(docker compose config --services)
+  grep -qx "$1" <<<"$services"
 }
 
 compose_has_tools_service() {
-  docker compose --profile tools config --services | grep -qx "$1"
+  local services
+  services=$(docker compose --profile tools config --services)
+  grep -qx "$1" <<<"$services"
 }
 
 compose_has_workspace_and_gitleaks() {

@@ -78,7 +78,7 @@ is_guard_pair() {
 check_guard() {
   local before="$FAIL_COUNT"
   echo "=== GUARD (first check): catalog_user must get ${DENIED_ERROR} on USE identity ==="
-  expect_denied catalog identity
+  expect_denied catalog_user identity
   if [[ "$FAIL_COUNT" -gt "$before" ]]; then
     echo "!!! GUARD FAILED: catalog_user can reach the identity database. Fix grants before anything else."
   fi

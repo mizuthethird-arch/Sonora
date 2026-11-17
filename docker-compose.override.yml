@@ -4,5 +4,9 @@ services:
       - .:/workspace
       - workspace_node_modules:/workspace/node_modules
 
+  api:
+    volumes:
+      - ./apps/api/src:/workspace/apps/api/src
+
 volumes:
   workspace_node_modules:
