@@ -517,6 +517,31 @@ packages_with_tests_run_in_ci() {
   done < <(find apps packages modules infra -name package.json -not -path '*/node_modules/*')
 }
 
+api_stage_text() {
+  awk '/ AS api$/ { found = 1 } found { print }' Dockerfile
+}
+
+api_stage_removes_npm() {
+  local text
+  text=$(api_stage_text)
+  text_contains_all "$text" 'rm -rf /usr/local/lib/node_modules/npm' /usr/local/bin/npm /usr/local/bin/npx
+}
+
+api_image_exists() {
+  docker image inspect sonora-api:verify >/dev/null 2>&1
+}
+
+ensure_api_image() {
+  api_image_exists || build_api_image
+}
+
+api_image_has_no_npm() {
+  ensure_api_image || return 1
+  docker run --rm --entrypoint sh sonora-api:verify \
+    -c 'test ! -e /usr/local/lib/node_modules/npm && ! command -v npm && ! command -v npx' >/dev/null 2>&1 || return 1
+  docker run --rm --entrypoint node sonora-api:verify --version >/dev/null 2>&1
+}
+
 check "compose file is valid" docker compose config --quiet
 check "compose defines workspace and gitleaks services" compose_has_workspace_and_gitleaks
 check "workspace image is pinned by version and digest" file_matches Dockerfile "$node_image_pattern"
@@ -591,6 +616,8 @@ check "the SARIF upload skips Dependabot runs and a missing report" upload_sarif
 check "the migration dry run uses only the base compose file" migration_dry_run_uses_base_compose_file
 check "the workflow never continues on error" file_lacks "$workflow" continue-on-error
 check "every package that has a test script also has a test script that CI runs" packages_with_tests_run_in_ci
+check "the api stage removes npm from the production image" api_stage_removes_npm
+check "the built api image has no npm" api_image_has_no_npm
 check "every job has a 20 minute timeout" every_job_times_out_at_twenty_minutes
 check "the image job builds once with buildx and the GitHub cache, tagged sha-" image_job_builds_and_caches_sha_image
 check "trivy fails on fixable high and critical findings and uploads SARIF" image_job_scans_with_trivy
