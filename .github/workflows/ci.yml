@@ -26,5 +26,7 @@ jobs:
         run: docker compose -f docker-compose.yml run --rm gitleaks
       - name: Build workspace image
         run: docker compose -f docker-compose.yml build workspace
+      - name: Check module boundaries
+        run: docker compose -f docker-compose.yml run --rm workspace pnpm run check:boundaries
       - name: Lint, typecheck, test, build
         run: docker compose -f docker-compose.yml run --rm workspace pnpm run ci

@@ -105,6 +105,11 @@ check "gitleaks image is pinned by version and digest" file_matches docker-compo
 check "gitleaks mounts the repository read-only" file_contains docker-compose.yml '.:/repo:ro'
 check "pnpm version is pinned in package.json" file_matches package.json "$pnpm_version_pattern"
 check "ci script runs audit, lint, typecheck, test and build in order" file_matches package.json "$ci_gates_pattern"
+check "check:boundaries runs dependency-cruiser with the boundaries config" file_matches package.json \
+  '"check:boundaries": "depcruise .* --config packages/config/boundaries.cjs'
+check "ci runs the boundary check before the tests" file_matches package.json '"ci": ".*check:boundaries.*run test'
+check "workflow runs the boundary check as its own step" file_contains "$workflow" \
+  'run: docker compose -f docker-compose.yml run --rm workspace pnpm run check:boundaries'
 check "workspace declares apps and packages" file_contains pnpm-workspace.yaml 'apps/*' 'packages/*'
 check "base compose has no bind mount, override adds it" bind_mount_only_in_override
 check "dockerignore excludes dependencies, git data and secrets" file_has_lines .dockerignore \

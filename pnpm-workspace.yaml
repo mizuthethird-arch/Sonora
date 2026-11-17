@@ -7,3 +7,8 @@ allowBuilds:
   prisma: false
 
 storeDir: node_modules/.pnpm-store
+
+packageExtensions:
+  dependency-cruiser:
+    peerDependencies:
+      typescript: ">=5 <7"
