@@ -138,5 +138,8 @@ export { TrackAddedEventSchema } from "./events.js";
 
 ## Limits
 
+- `node_modules` is not followed, but imports that resolve into it are still checked, so a database client cannot hide there.
+- CI has no generated Prisma client (`generated/` is ignored), so there the import is matched by its path text. Locally the generated files are scanned too.
+- A module importing a file outside `apps`, `modules` and `packages` (for example `scripts/`) is not checked yet.
 - Only static imports are checked. A dynamic `import(name)` or `require(name)` with a variable cannot be resolved, so do not use it to reach another module.
 - The root `typescript` 6.0.3 exists only because dependency-cruiser needs a TypeScript with a JavaScript API, which TypeScript 7 does not ship. Do not bump it to 7 at the root.

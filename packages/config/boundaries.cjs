@@ -1,3 +1,23 @@
+const DATABASE_CLIENTS = [
+  "@prisma/client",
+  "@prisma/adapter-mariadb",
+  "mysql",
+  "mysql2",
+  "mariadb",
+  "knex",
+  "drizzle-orm",
+  "pg",
+  "better-sqlite3",
+  "mongodb",
+  "typeorm",
+  "sequelize",
+  "kysely",
+  "@libsql/client",
+].join("|");
+
+// A bare specifier that could not be resolved, a path inside node_modules, or the generated Prisma client.
+const DATABASE_CLIENT_PATH = `^(${DATABASE_CLIENTS})(/|$)|(^|/)node_modules/(${DATABASE_CLIENTS})(/|$)|(^|/)generated/prisma(/|$)`;
+
 /** @type {import("dependency-cruiser").IConfiguration} */
 module.exports = {
   forbidden: [
@@ -51,19 +71,16 @@ module.exports = {
       comment:
         "Database clients are imported only inside modules/<name>/src/infrastructure, so a module owns its data. apps/api/src/database holds the current Prisma setup until the schema moves into modules. See docs/boundaries.md#no-database-client-outside-infrastructure",
       from: { pathNot: ["^modules/[^/]+/src/infrastructure/", "^apps/api/src/database/", "^apps/api/src/generated/"] },
-      to: {
-        path: "(^|/node_modules/)(@prisma/client|@prisma/adapter-mariadb|mysql2?|mariadb|knex|drizzle-orm|pg|better-sqlite3|mongodb|typeorm|sequelize|kysely|@libsql/client)(/|$)|(^|/)generated/prisma(/|$)",
-      },
+      to: { path: DATABASE_CLIENT_PATH },
     },
   ],
   options: {
     doNotFollow: { path: "node_modules" },
-    exclude: { path: "^packages/config/fixtures/|(^|/)node_modules/|^apps/[^/]+/dist/" },
+    exclude: { path: "^packages/config/fixtures/|^apps/[^/]+/dist/" },
     tsPreCompilationDeps: true,
     enhancedResolveOptions: {
       exportsFields: ["exports"],
       conditionNames: ["import", "require", "node", "default"],
-      extensions: [".ts", ".js", ".json"],
     },
   },
 };
