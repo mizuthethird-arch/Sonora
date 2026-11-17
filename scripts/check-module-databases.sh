@@ -19,17 +19,29 @@ fail_fast() {
   exit 1
 }
 
-load_env() {
-  [[ -f "$ENV_FILE" ]] || fail_fast "missing $ENV_FILE in repo root; it must set MODULE_DB_PASSWORD"
-  set -a
-  . "./$ENV_FILE"
-  set +a
-  [[ -n "${MODULE_DB_PASSWORD:-}" ]] || fail_fast "MODULE_DB_PASSWORD is not set in $ENV_FILE"
+# Prints the value of KEY from FILE (last match wins), without whitespace or quotes.
+read_value() {
+  local file="$1" key="$2" line
+  line=$(grep -E "^${key}=" "$file" | tail -n 1 || true)
+  line="${line#"$key"=}"
+  line="${line//\"/}"
+  line="${line//\'/}"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  printf '%s' "$line"
 }
 
+# Reads only MODULE_DB_PASSWORD from the env file. The file is data here, never sourced.
+load_password() {
+  [[ -f "$ENV_FILE" ]] || fail_fast "missing $ENV_FILE in repo root; it must set MODULE_DB_PASSWORD"
+  MODULE_DB_PASSWORD="$(read_value "$ENV_FILE" MODULE_DB_PASSWORD)"
+  [[ -n "$MODULE_DB_PASSWORD" ]] || fail_fast "MODULE_DB_PASSWORD is not set in $ENV_FILE"
+}
+
+# The password goes to mysql through MYSQL_PWD, never on a command line.
 run_sql() {
   local user="$1" sql="$2"
-  docker compose exec -T mysql mysql -u"$user" -p"$MODULE_DB_PASSWORD" -e "$sql" 2>&1
+  MYSQL_PWD="$MODULE_DB_PASSWORD" docker compose exec -T -e MYSQL_PWD mysql mysql -u"$user" -e "$sql" 2>&1
 }
 
 record_pass() {
@@ -109,7 +121,7 @@ print_summary() {
 
 main() {
   enter_repo_root
-  load_env
+  load_password
   check_guard
   local module
   for module in "${MODULES[@]}"; do

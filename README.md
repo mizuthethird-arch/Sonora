@@ -54,6 +54,7 @@ Traefik serves these hostnames on port 80 of 127.0.0.1. Set `TRAEFIK_PORT` in `.
 - The existing `sonora` database and the root user stay in place for Prisma and the tests.
 - This setup is for development only. It is not for staging or production.
 - `make check-databases` checks that each module user can use only its own database.
+- The module user password is applied when the database container starts. After you change `MODULE_DB_PASSWORD`, run `make down-v` and then `make up` again.
 
 ## Environment file
 
@@ -74,6 +75,7 @@ Keys:
 - Output: the tracks are stored in the S3 `originals` bucket.
 - Rerun: a rerun is idempotent. It skips any object whose sha256 already exists.
 - Checksum: if a download does not match its `sha256`, the seed fails loudly.
+- A checksum mismatch stops the run with an error message, and no `seed-report.json` is written.
 - Retries: a 404 or 429 response is retried three times with exponential backoff. After that, the track is recorded as skipped.
 - Report: the run writes `seed-report.json` with counts of stored, already present, skipped and failed tracks.
 - Test data: the repository ships a small fixture manifest for tests.

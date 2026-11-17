@@ -24,6 +24,7 @@ logs:
 	@if [ -z "$(s)" ]; then echo "usage: make logs s=<service>" >&2; exit 1; fi
 	docker compose logs -f $(s)
 
+# The AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY values below are dummy values for the S3Mock emulator, never real credentials.
 seed:
 	docker compose run --rm -e S3_ENDPOINT=http://s3:9090 -e AWS_ACCESS_KEY_ID=dev -e AWS_SECRET_ACCESS_KEY=dev workspace pnpm --filter @sonora/seed run seed
 
