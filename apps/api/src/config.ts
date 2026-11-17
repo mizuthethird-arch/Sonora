@@ -3,10 +3,15 @@ import { z } from "zod";
 const DEFAULT_PORT = 3000;
 const LOWEST_PORT = 1;
 const HIGHEST_PORT = 65535;
+const INVALID_PORT_MESSAGE = `Invalid configuration: PORT must be a whole number from ${LOWEST_PORT} to ${HIGHEST_PORT}`;
+
+// The text is checked before it becomes a number, because Number() would accept "1e3" and "3.5".
+// Digits only, no leading zero, at most five digits.
+const PORT_TEXT = /^[1-9]\d{0,4}$/;
 
 const portSchema = z
   .string()
-  .regex(/^\d{1,5}$/)
+  .regex(PORT_TEXT)
   .transform(Number)
   .pipe(z.number().min(LOWEST_PORT).max(HIGHEST_PORT));
 
@@ -22,7 +27,7 @@ export function loadConfig(environment: Record<string, string | undefined>): Con
   const result = environmentSchema.safeParse(environment);
 
   if (!result.success) {
-    throw new Error(`Invalid configuration: PORT must be a whole number from ${LOWEST_PORT} to ${HIGHEST_PORT}`);
+    throw new Error(INVALID_PORT_MESSAGE);
   }
 
   return { port: result.data.PORT };
