@@ -6,7 +6,10 @@ const configFile = fileURLToPath(new URL("../commitlint.config.js", import.meta.
 const MAXIMUM_HEADER_LENGTH = 100;
 
 function lintCommitMessage(message: string): { status: number | null; output: string } {
-  const result = spawnSync("pnpm", ["exec", "commitlint", "--config", configFile], { input: message, encoding: "utf8" });
+  const result = spawnSync("pnpm", ["exec", "commitlint", "--config", configFile], {
+    input: message,
+    encoding: "utf8",
+  });
   expect(result.error).toBeUndefined();
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
@@ -24,7 +27,8 @@ describe("the shared commitlint config", () => {
   });
 
   it("accepts a body and a trailer", () => {
-    const message = "chore: update the lockfile\n\nThe tool needs a newer release.\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>";
+    const message =
+      "chore: update the lockfile\n\nThe tool needs a newer release.\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>";
 
     expect(lintCommitMessage(message).status).toBe(0);
   });

@@ -5,9 +5,7 @@
   "exports": {
     "./eslint": "./eslint.config.js",
     "./prettier": "./prettier.config.js",
-    "./tsconfig.base.json": "./tsconfig.base.json",
-    "./boundaries": "./boundaries.cjs",
-    "./commitlint": "./commitlint.config.js"
+    "./tsconfig.base.json": "./tsconfig.base.json"
   },
   "scripts": {
     "test": "vitest run",
@@ -24,6 +22,6 @@
     "@eslint/js": "10.0.1",
     "eslint": "10.15.0",
     "prettier": "3.10.1",
-    "typescript-eslint": "8.73.0"
+    "typescript-eslint": "8.72.2"
   }
 }

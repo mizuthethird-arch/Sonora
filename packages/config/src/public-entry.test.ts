@@ -8,7 +8,7 @@ describe("findForbiddenExports", () => {
     ["a type alias", "export type TrackId = string;"],
     ["a type-only re-export", 'export type { CatalogFacade } from "./facade.js";'],
     ["an inline type-only re-export", 'export { type CatalogFacade } from "./facade.js";'],
-    ["an event schema", 'export const TrackAddedEventSchema = z.object({});'],
+    ["an event schema", "export const TrackAddedEventSchema = z.object({});"],
     ["an event schema re-export", 'export { TrackAddedEventSchema } from "./events.js";'],
     ["imports and private code", 'import { z } from "zod";\nconst hidden = 1;\nexport type Hidden = typeof hidden;'],
   ])("allows %s", (_name, source) => {

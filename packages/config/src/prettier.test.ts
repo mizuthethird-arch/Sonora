@@ -4,7 +4,10 @@ import prettierConfig from "../prettier.config.js";
 
 describe("the shared Prettier config", () => {
   it("uses double quotes, semicolons and trailing commas", async () => {
-    const formatted = await format("const options = {\n  a: 'x',\n  b: 'y'\n}\n", { ...prettierConfig, parser: "typescript" });
+    const formatted = await format("const options = {\n  a: 'x',\n  b: 'y'\n}\n", {
+      ...prettierConfig,
+      parser: "typescript",
+    });
 
     expect(formatted).toBe('const options = {\n  a: "x",\n  b: "y",\n};\n');
   });
