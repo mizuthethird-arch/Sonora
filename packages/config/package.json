@@ -1,0 +1,9 @@
+{
+  "name": "@sonora/config",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "vitest": "5.1.0"
+  }
+}

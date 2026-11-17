@@ -5,5 +5,6 @@ RUN chown node:node /workspace
 USER node
 COPY --chown=node:node package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY --chown=node:node apps/api/package.json apps/api/
+COPY --chown=node:node packages/config/package.json packages/config/
 RUN pnpm install --frozen-lockfile
 COPY --chown=node:node . .
