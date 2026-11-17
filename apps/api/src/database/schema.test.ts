@@ -274,6 +274,53 @@ describe("catalog", () => {
   });
 });
 
+describe("optional catalog and playlist columns", () => {
+  it("leaves the audio object key empty until audio is stored, and accepts 1024 characters", async () => {
+    const artist = await createArtist();
+    const track = await createTrack(artist.id);
+    const withKey = await prisma.track.update({ where: { id: track.id }, data: { audioObjectKey: "k".repeat(1024) } });
+
+    expect(track.audioObjectKey).toBeNull();
+    expect(withKey.audioObjectKey).toHaveLength(1024);
+  });
+
+  it("rejects an audio object key longer than 1024 characters", async () => {
+    const artist = await createArtist();
+    const track = await createTrack(artist.id);
+
+    const update = prisma.track.update({ where: { id: track.id }, data: { audioObjectKey: "k".repeat(1025) } });
+
+    await expect(update).rejects.toMatchObject(VALUE_TOO_LONG);
+  });
+
+  it("stores the release date of an album, which is optional", async () => {
+    const artist = await createArtist();
+    const withoutDate = await prisma.album.create({
+      data: { title: "Undated", artistId: artist.id, externalSource: "JAMENDO", externalId: "undated" },
+    });
+    const withDate = await prisma.album.create({
+      data: {
+        title: "Dated",
+        artistId: artist.id,
+        externalSource: "JAMENDO",
+        externalId: "dated",
+        releasedAt: new Date("2020-05-17"),
+      },
+    });
+
+    expect(withoutDate.releasedAt).toBeNull();
+    expect(withDate.releasedAt?.toISOString().slice(0, 10)).toBe("2020-05-17");
+  });
+
+  it("lets a playlist be made public", async () => {
+    const user = await createUser();
+
+    const playlist = await prisma.playlist.create({ data: { userId: user.id, name: "Shared", isPublic: true } });
+
+    expect(playlist.isPublic).toBe(true);
+  });
+});
+
 describe("playlists", () => {
   it("need an existing user", async () => {
     await expect(createPlaylist(MISSING_ID)).rejects.toMatchObject(FOREIGN_KEY_VIOLATION);
