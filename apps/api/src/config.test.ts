@@ -19,6 +19,7 @@ describe("loadConfig", () => {
     ["empty", ""],
     ["blank", "   "],
     ["zero", "0"],
+    ["padded with zeros", "0080"],
     ["too high", "65536"],
     ["negative", "-1"],
     ["decimal", "3.5"],
@@ -30,7 +31,9 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ PORT: port })).toThrow("Invalid configuration");
   });
 
-  it("does not echo the rejected value in the error", () => {
-    expect(() => loadConfig({ PORT: "secret-looking-value" })).toThrow(/^(?!.*secret-looking-value)/);
+  it("reports a fixed message that does not echo the rejected value", () => {
+    expect(() => loadConfig({ PORT: "secret-looking-value" })).toThrow(
+      new Error("Invalid configuration: PORT must be a whole number from 1 to 65535"),
+    );
   });
 });

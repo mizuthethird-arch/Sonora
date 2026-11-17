@@ -41,6 +41,14 @@ describe("startServer", () => {
   });
 });
 
+describe("a listening server", () => {
+  it("does not swallow runtime errors", async () => {
+    const server = await startOnFreePort();
+
+    expect(() => server.emit("error", new Error("runtime failure"))).toThrow("runtime failure");
+  });
+});
+
 describe("stopServer", () => {
   it("stops accepting connections", async () => {
     const server = await startOnFreePort();
@@ -86,5 +94,17 @@ describe("shutdownOnSignals", () => {
     await stopped;
 
     expect(server.listening).toBe(false);
+  });
+
+  it("removes its signal listeners once the server has stopped", async () => {
+    const countListeners = () => process.listenerCount("SIGTERM") + process.listenerCount("SIGINT");
+    const listenersBefore = countListeners();
+    const server = await startOnFreePort();
+    const stopped = shutdownOnSignals(server);
+
+    process.emit("SIGTERM");
+    await stopped;
+
+    expect(countListeners()).toBe(listenersBefore);
   });
 });
