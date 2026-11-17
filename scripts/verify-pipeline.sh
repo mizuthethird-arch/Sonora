@@ -265,6 +265,283 @@ readme_explains_password_change_and_checksum_stop() {
   readme_line_has_both checksum stops
 }
 
+job_text() {
+  awk -v id="$1" '
+    $0 == "  " id ":" { found = 1; print; next }
+    found && /^  [^ #][^ :]*:/ { exit }
+    found { print }
+  ' "$workflow"
+}
+
+text_contains_all() {
+  local text="$1" needle
+  shift
+  for needle in "$@"; do
+    grep -Fq -- "$needle" <<<"$text" || return 1
+  done
+}
+
+job_needs() {
+  local job="$1" needed="$2" text
+  text=$(job_text "$job")
+  grep -Eq "^ +- +$needed *\$|needs:.*[^a-z_-]$needed([^a-z_-]|\$)" <<<"$text"
+}
+
+grant_only_in_job() {
+  local grant="$1" job="$2" text
+  [ "$(grep -cF -- "$grant" "$workflow")" -eq 1 ] || return 1
+  text=$(job_text "$job")
+  text_contains_all "$text" "$grant"
+}
+
+workflow_permissions_block() {
+  awk '/^permissions:/ { found = 1; next } found && /^[^ #]/ { exit } found { print }' "$workflow"
+}
+
+workflow_grants_only_read() {
+  local block
+  block=$(workflow_permissions_block)
+  text_contains_all "$block" 'contents: read' || return 1
+  ! grep -Eq ':[[:space:]]*write' <<<"$block"
+}
+
+packages_write_only_in_publish() {
+  grant_only_in_job 'packages: write' publish && workflow_grants_only_read
+}
+
+if_line_pattern='^ *(- +)?if:'
+
+publish_runs_on_push_to_main() {
+  local text if_line
+  text=$(job_text publish)
+  if_line=$(grep -E "$if_line_pattern" <<<"$text") || return 1
+  text_contains_all "$if_line" 'refs/heads/main' push && job_needs publish image
+}
+
+every_job_times_out_at_twenty_minutes() {
+  [ "$(grep -Ec '^ +timeout-minutes: 20 *$' "$workflow")" -eq 6 ]
+}
+
+workflow_has_six_jobs() {
+  local id
+  for id in checks integration migration image publish ci; do
+    file_matches "$workflow" "^  $id:" || return 1
+  done
+}
+
+ci_gate_needs_every_job() {
+  local job
+  for job in checks integration migration image publish; do
+    job_needs ci "$job" || return 1
+  done
+}
+
+ci_gate_checks_results() {
+  local text
+  text=$(job_text ci)
+  text_contains_all "$text" 'if: always()' 'needs.*.result' failure cancelled
+}
+
+ci_gate_job_is_ready() {
+  ci_gate_needs_every_job && ci_gate_checks_results
+}
+
+image_job_builds_and_caches_sha_image() {
+  local text
+  text=$(job_text image)
+  text_contains_all "$text" docker/build-push-action 'cache-from: type=gha' 'cache-to: type=gha' 'sha-'
+}
+
+image_job_scans_with_trivy() {
+  local text
+  text=$(job_text image)
+  text_contains_all "$text" aquasecurity/trivy-action 'ignore-unfixed: true' 'HIGH,CRITICAL' "exit-code: '1'" upload-sarif
+}
+
+sarif_upload_skips_fork_pull_requests() {
+  local text if_lines
+  text=$(job_text image)
+  if_lines=$(grep -E "$if_line_pattern" <<<"$text") || return 1
+  text_contains_all "$if_lines" github.repository github.event.pull_request.head.repo.full_name
+}
+
+unit_tests_write_uploaded_junit_report() {
+  file_contains "$workflow" upload-artifact junit
+}
+
+jobs_run_their_test_suites() {
+  local text
+  text=$(job_text checks)
+  text_contains_all "$text" 'pnpm run test:unit' || return 1
+  text=$(job_text integration)
+  text_contains_all "$text" 'pnpm run test:integration' || return 1
+  text=$(job_text migration)
+  text_contains_all "$text" scripts/migration-dry-run.sh
+}
+
+two_attempts_pattern='for [A-Za-z_]+ in 1 2( |;|$)|seq 1 2|ATTEMPTS=2|attempts=2'
+
+image_pulls_retry_with_warning() {
+  file_contains "$workflow" scripts/ci-pull.sh || return 1
+  [ -x scripts/ci-pull.sh ] || return 1
+  file_contains scripts/ci-pull.sh 'docker compose' pull '::warning::' || return 1
+  file_matches scripts/ci-pull.sh "$two_attempts_pattern"
+}
+
+test_suites_are_split() {
+  file_contains package.json '"test:unit"' '"test:integration"' || return 1
+  file_contains apps/api/package.json '"test:unit"' '"test:integration"'
+}
+
+migration_dry_run_passes() {
+  [ -x scripts/migration-dry-run.sh ] && scripts/migration-dry-run.sh
+}
+
+api_stage_pattern='^FROM node:24\.22\.3-alpine@sha256:[0-9a-f]{64} AS api$'
+
+dockerfile_has_production_api_stage() {
+  local api_line user_line
+  api_line=$(grep -nE "$api_stage_pattern" Dockerfile | cut -d: -f1) || return 1
+  user_line=$(grep -nxF 'USER node' Dockerfile | tail -n 1 | cut -d: -f1) || return 1
+  [ "$user_line" -gt "$api_line" ] || return 1
+  file_matches Dockerfile '^CMD \["node", ?"dist/index\.js"\]'
+}
+
+api_container=sonora-api-verify
+
+remove_api_container() {
+  docker rm -f "$api_container" >/dev/null 2>&1 || true
+}
+
+build_api_image() {
+  docker build --target api -t sonora-api:verify . >/dev/null 2>&1
+}
+
+start_api_container() {
+  docker run -d --name "$api_container" sonora-api:verify >/dev/null 2>&1
+}
+
+api_health_body() {
+  docker exec "$api_container" wget -q -O - http://127.0.0.1:3000/health 2>/dev/null || true
+}
+
+api_is_healthy() {
+  [ "$(api_health_body)" = '{"status":"ok"}' ]
+}
+
+wait_for_api_health() {
+  local attempt
+  for attempt in $(seq 1 60); do
+    api_is_healthy && return 0
+    sleep 1
+  done
+  return 1
+}
+
+api_image_answers_health() {
+  local verdict=1
+  remove_api_container
+  if build_api_image && start_api_container && wait_for_api_health; then
+    verdict=0
+  fi
+  remove_api_container
+  return "$verdict"
+}
+
+compose_run_lines() {
+  grep -F 'docker compose -f docker-compose.yml run' "$workflow"
+}
+
+workflow_runs_script_via_compose() {
+  local lines
+  lines=$(compose_run_lines) || return 1
+  grep -Eq "pnpm run $1( |\$)" <<<"$lines"
+}
+
+workflow_runs_gate_scripts_via_compose() {
+  local script
+  for script in audit:dependencies lint check:boundaries typecheck test:unit test:integration build; do
+    workflow_runs_script_via_compose "$script" || return 1
+  done
+}
+
+gitleaks_and_gates_run_via_compose() {
+  file_contains "$workflow" 'run: docker compose -f docker-compose.yml run --rm gitleaks' || return 1
+  workflow_runs_gate_scripts_via_compose
+}
+
+compose_lines_without_base_file() {
+  grep -F 'docker compose' "$workflow" | grep -Fv -- '-f docker-compose.yml'
+}
+
+workflow_never_uses_dev_override() {
+  file_lacks "$workflow" docker-compose.override.yml || return 1
+  [ -z "$(compose_lines_without_base_file)" ]
+}
+
+publish_waits_for_every_gate() {
+  local job
+  for job in checks integration migration image; do
+    job_needs publish "$job" || return 1
+  done
+}
+
+trivy_limits_sarif_severities() {
+  text_contains_all "$(job_text image)" 'limit-severities-for-sarif: true'
+}
+
+upload_sarif_skips_dependabot_and_missing_report() {
+  local text if_lines
+  text=$(job_text image)
+  if_lines=$(grep -E "$if_line_pattern" <<<"$text") || return 1
+  text_contains_all "$if_lines" 'dependabot[bot]' "hashFiles('trivy.sarif')"
+}
+
+migration_dry_run_uses_base_compose_file() {
+  local script=scripts/migration-dry-run.sh compose_lines
+  compose_lines=$(grep 'docker compose' "$script") || return 1
+  text_contains_all "$compose_lines" '-f docker-compose.yml' || return 1
+  file_lacks "$script" docker-compose.override.yml
+}
+
+package_test_script_is_split() {
+  local file="$1"
+  grep -q '"test":' "$file" || return 0
+  grep -Eq '"test:(unit|integration)":' "$file"
+}
+
+packages_with_tests_run_in_ci() {
+  local file
+  while IFS= read -r file; do
+    package_test_script_is_split "$file" || return 1
+  done < <(find apps packages modules infra -name package.json -not -path '*/node_modules/*')
+}
+
+api_stage_text() {
+  awk '/ AS api$/ { found = 1 } found { print }' Dockerfile
+}
+
+api_stage_removes_npm() {
+  local text
+  text=$(api_stage_text)
+  text_contains_all "$text" 'rm -rf /usr/local/lib/node_modules/npm' /usr/local/bin/npm /usr/local/bin/npx
+}
+
+api_image_exists() {
+  docker image inspect sonora-api:verify >/dev/null 2>&1
+}
+
+ensure_api_image() {
+  api_image_exists || build_api_image
+}
+
+api_image_has_no_npm() {
+  ensure_api_image || return 1
+  docker run --rm --entrypoint sh sonora-api:verify \
+    -c 'test ! -e /usr/local/lib/node_modules/npm && ! command -v npm && ! command -v npx' >/dev/null 2>&1 || return 1
+  docker run --rm --entrypoint node sonora-api:verify --version >/dev/null 2>&1
+}
+
 check "compose file is valid" docker compose config --quiet
 check "compose defines workspace and gitleaks services" compose_has_workspace_and_gitleaks
 check "workspace image is pinned by version and digest" file_matches Dockerfile "$node_image_pattern"
@@ -277,7 +554,7 @@ check "check:boundaries runs dependency-cruiser with the boundaries config" file
   '"check:boundaries": "depcruise .* --config packages/config/boundaries.cjs'
 check "ci runs the boundary check before the tests" file_matches package.json '"ci": ".*check:boundaries.*run test'
 check "workflow runs the boundary check as its own step" file_contains "$workflow" \
-  'run: docker compose -f docker-compose.yml run --rm workspace pnpm run check:boundaries'
+  'run: docker compose -f docker-compose.yml run --rm --no-deps workspace pnpm run check:boundaries'
 check "workspace declares apps and packages" file_contains pnpm-workspace.yaml 'apps/*' 'packages/*'
 check "base compose has no bind mount, override adds it" bind_mount_only_in_override
 check "dockerignore excludes dependencies, git data and secrets" file_has_lines .dockerignore \
@@ -287,10 +564,9 @@ check "workflow runs on pull requests to dev and main" workflow_trigger_has_bran
 check "workflow runs on pushes to dev and main" workflow_trigger_has_branches push
 check "workflow runner is pinned" file_contains "$workflow" 'runs-on: ubuntu-24.04'
 check "workflow cancels superseded runs only on pull requests" file_contains "$workflow" "$cancel_only_on_pull_requests"
-check "workflow runs gitleaks and the pipeline through docker compose without the dev override" \
-  file_contains "$workflow" \
-  'run: docker compose -f docker-compose.yml run --rm gitleaks' \
-  'run: docker compose -f docker-compose.yml run --rm workspace pnpm run ci'
+check "workflow runs gitleaks and each gate script (audit, lint, boundaries, typecheck, unit, integration, build) through docker compose -f docker-compose.yml" \
+  gitleaks_and_gates_run_via_compose
+check "the workflow never uses the dev override file" workflow_never_uses_dev_override
 check "workflow pins actions to a commit sha" workflow_pins_actions_to_sha
 check "workflow requests read-only permissions" file_contains "$workflow" 'contents: read'
 check "pre-commit hook scans staged changes for secrets" hook_scans_staged_changes
@@ -329,6 +605,31 @@ check "the module database check does not put the password on the command line" 
 check "the api dev script calls a small commented script" api_dev_runs_commented_script
 check "the Makefile marks the seed credentials as dummies" makefile_marks_seed_credentials_as_dummies
 check "the README explains password changes and the checksum stop" readme_explains_password_change_and_checksum_stop
+check "ci has the six jobs" workflow_has_six_jobs
+check "the ci gate job needs every other job and fails on failure or cancellation" ci_gate_job_is_ready
+check "packages write is granted only to the publish job" packages_write_only_in_publish
+check "security-events write is granted only to the image job" grant_only_in_job 'security-events: write' image
+check "publish runs only on a push to main" publish_runs_on_push_to_main
+check "publish waits for every gate job" publish_waits_for_every_gate
+check "trivy limits severities when it writes SARIF" trivy_limits_sarif_severities
+check "the SARIF upload skips Dependabot runs and a missing report" upload_sarif_skips_dependabot_and_missing_report
+check "the migration dry run uses only the base compose file" migration_dry_run_uses_base_compose_file
+check "the workflow never continues on error" file_lacks "$workflow" continue-on-error
+check "every package that has a test script also has a test script that CI runs" packages_with_tests_run_in_ci
+check "the api stage removes npm from the production image" api_stage_removes_npm
+check "the built api image has no npm" api_image_has_no_npm
+check "every job has a 20 minute timeout" every_job_times_out_at_twenty_minutes
+check "the image job builds once with buildx and the GitHub cache, tagged sha-" image_job_builds_and_caches_sha_image
+check "trivy fails on fixable high and critical findings and uploads SARIF" image_job_scans_with_trivy
+check "SARIF upload is skipped for fork pull requests" sarif_upload_skips_fork_pull_requests
+check "unit tests write a JUnit report that is uploaded" unit_tests_write_uploaded_junit_report
+check "the checks job runs the unit tests and the integration job runs the integration tests" jobs_run_their_test_suites
+check "image pulls are retried with a warning" image_pulls_retry_with_warning
+check "the root and the api package split unit and integration tests" test_suites_are_split
+check "unit tests run without a database" timeout 600 docker compose run --rm --no-deps workspace pnpm run test:unit
+check "the migration dry run applies the migrations and a second run is a no-op" migration_dry_run_passes
+check "the Dockerfile has a production api stage" dockerfile_has_production_api_stage
+check "the production api image starts and answers /health" api_image_answers_health
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"

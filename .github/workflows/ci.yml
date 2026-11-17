@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  verify:
+  checks:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -31,7 +31,156 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | docker compose -f docker-compose.yml run --rm --no-deps -T workspace pnpm run --silent commitlint
+      - name: Audit dependencies
+        run: docker compose -f docker-compose.yml run --rm --no-deps workspace pnpm run audit:dependencies
+      - name: Lint
+        run: docker compose -f docker-compose.yml run --rm --no-deps workspace pnpm run lint
       - name: Check module boundaries
-        run: docker compose -f docker-compose.yml run --rm workspace pnpm run check:boundaries
-      - name: Lint, typecheck, test, build
-        run: docker compose -f docker-compose.yml run --rm workspace pnpm run ci
+        run: docker compose -f docker-compose.yml run --rm --no-deps workspace pnpm run check:boundaries
+      - name: Typecheck
+        run: docker compose -f docker-compose.yml run --rm --no-deps workspace pnpm run typecheck
+      - name: Unit tests
+        run: |
+          mkdir -p reports && chmod 777 reports
+          docker compose -f docker-compose.yml run --rm --no-deps -e CI=true -v "$PWD/reports:/workspace/reports" workspace pnpm run test:unit
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-unit
+          path: reports/junit
+      - name: Build
+        run: docker compose -f docker-compose.yml run --rm --no-deps workspace pnpm run build
+
+  integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pull images
+        run: ./scripts/ci-pull.sh mysql
+      - name: Integration tests
+        run: |
+          mkdir -p reports && chmod 777 reports
+          docker compose -f docker-compose.yml run --rm -e CI=true -v "$PWD/reports:/workspace/reports" workspace pnpm run test:integration
+      - name: Upload integration test reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-integration
+          path: reports/junit
+
+  migration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pull images
+        run: ./scripts/ci-pull.sh mysql
+      - name: Migration dry run
+        run: ./scripts/migration-dry-run.sh
+
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Name the api image
+        id: image
+        run: echo "name=sonora-api:sha-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+      - name: Build the api image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: api
+          load: true
+          push: false
+          tags: ${{ steps.image.outputs.name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Save the api image
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: docker save "$IMAGE" --output "$RUNNER_TEMP/api-image.tar"
+      - name: Upload the api image
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: api-image
+          path: ${{ runner.temp }}/api-image.tar
+          retention-days: 1
+      - name: Scan the api image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.image.outputs.name }}
+          format: sarif
+          output: trivy.sarif
+          severity: HIGH,CRITICAL
+          limit-severities-for-sarif: true
+          ignore-unfixed: true
+          exit-code: '1'
+      - name: Upload Trivy SARIF
+        if: always() && hashFiles('trivy.sarif') != '' && github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@9418214df1f2c4b8128c770156c409013b07d6b9 # v3.39.3
+        with:
+          sarif_file: trivy.sarif
+
+  publish:
+    needs: [checks, integration, migration, image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Download the api image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: api-image
+          path: ${{ runner.temp }}
+      - name: Load the api image
+        run: docker load --input "$RUNNER_TEMP/api-image.tar"
+      - name: Log in to ghcr.io
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push the promoted image
+        run: |
+          source_image="sonora-api:sha-${GITHUB_SHA:0:7}"
+          target_image="ghcr.io/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA:0:7}"
+          docker tag "$source_image" "$target_image"
+          docker push "$target_image"
+
+  ci:
+    name: ci
+    needs: [checks, integration, migration, image, publish]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Fail when a needed job failed or was cancelled
+        env:
+          FAILED: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+          CHECKS: ${{ needs.checks.result }}
+          INTEGRATION: ${{ needs.integration.result }}
+          MIGRATION: ${{ needs.migration.result }}
+          IMAGE: ${{ needs.image.result }}
+          PUBLISH: ${{ needs.publish.result }}
+        run: |
+          printf 'checks: %s\nintegration: %s\nmigration: %s\nimage: %s\npublish: %s\n' "$CHECKS" "$INTEGRATION" "$MIGRATION" "$IMAGE" "$PUBLISH"
+          if [ "$FAILED" = true ]; then
+            echo "::error::a needed job failed or was cancelled"
+            exit 1
+          fi

@@ -5,6 +5,8 @@
   "scripts": {
     "generate": "prisma generate",
     "test": "pnpm run generate && vitest run",
+    "test:unit": "pnpm run generate && vitest run --project unit",
+    "test:integration": "pnpm run generate && vitest run --project integration",
     "typecheck": "pnpm run generate && tsc --noEmit",
     "build": "pnpm run generate && tsc -p tsconfig.build.json",
     "dev": "sh scripts/dev.sh",
