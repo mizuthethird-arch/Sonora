@@ -24,7 +24,7 @@ new_database_name() {
 run_prisma() {
   local database="$1"
   shift
-  docker compose run --rm -T -e "DATABASE_URL=$MYSQL_SERVER/$database" \
+  docker compose -f docker-compose.yml run --rm -T -e "DATABASE_URL=$MYSQL_SERVER/$database" \
     workspace pnpm --filter @sonora/api exec prisma "$@"
 }
 

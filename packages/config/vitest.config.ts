@@ -7,6 +7,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    // The ESLint and commitlint tests spawn tools and time out at 5s when the whole suite runs in parallel.
+    testTimeout: 30000,
     reporters: ci ? ["default", "junit"] : ["default"],
     outputFile: { junit: "../../reports/junit/config.xml" },
   },

@@ -5,7 +5,6 @@ const ci = Boolean(process.env["CI"]);
 
 export default defineConfig({
   test: {
-    environment: "node",
     reporters: ci ? ["default", "junit"] : ["default"],
     outputFile: { junit: "../../reports/junit/api.xml" },
     projects: [
