@@ -94,6 +94,26 @@ commit_msg_hook_runs_commitlint() {
   file_matches package.json '"commitlint": ".*@sonora/config exec commitlint --config commitlint.config.js"'
 }
 
+commit_msg_hook_judges_messages() {
+  local bad_message good_message verdict=0
+  bad_message=$(mktemp)
+  good_message=$(mktemp)
+  printf 'fixed stuff\n' >"$bad_message"
+  printf 'fix(api): return 404 for unknown track\n' >"$good_message"
+
+  .githooks/commit-msg "$bad_message" >/dev/null 2>&1 && verdict=1
+  .githooks/commit-msg "$good_message" >/dev/null 2>&1 || verdict=1
+
+  rm -f "$bad_message" "$good_message"
+  return "$verdict"
+}
+
+workflow_checks_the_pr_title_through_the_environment() {
+  file_contains "$workflow" \
+    "PR_TITLE: \${{ github.event.pull_request.title }}" \
+    'printf '"'"'%s\n'"'"' "$PR_TITLE" | docker compose -f docker-compose.yml run --rm --no-deps -T workspace pnpm run --silent commitlint'
+}
+
 hook_setup_script_is_ready() {
   [ -x scripts/setup-hooks.sh ] || return 1
   file_contains scripts/setup-hooks.sh 'core.hooksPath .githooks'
@@ -133,6 +153,10 @@ check "workflow pins actions to a commit sha" workflow_pins_actions_to_sha
 check "workflow requests read-only permissions" file_contains "$workflow" 'contents: read'
 check "pre-commit hook scans staged changes for secrets" hook_scans_staged_changes
 check "commit-msg hook checks the message with the shared commitlint config" commit_msg_hook_runs_commitlint
+check "commit-msg hook rejects fixed stuff and accepts a conventional message" commit_msg_hook_judges_messages
+check "workflow lints the pull request title with commitlint, passed through the environment" \
+  workflow_checks_the_pr_title_through_the_environment
+check "no release-age exemptions in the pnpm workspace" file_lacks pnpm-workspace.yaml minimumReleaseAgeExclude
 check "dependabot covers npm, docker, docker-compose and github-actions" file_has_lines .github/dependabot.yml \
   '  - package-ecosystem: npm' \
   '  - package-ecosystem: docker' \
