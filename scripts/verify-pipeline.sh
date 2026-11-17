@@ -486,6 +486,37 @@ publish_waits_for_every_gate() {
   done
 }
 
+trivy_limits_sarif_severities() {
+  text_contains_all "$(job_text image)" 'limit-severities-for-sarif: true'
+}
+
+upload_sarif_skips_dependabot_and_missing_report() {
+  local text if_lines
+  text=$(job_text image)
+  if_lines=$(grep -E "$if_line_pattern" <<<"$text") || return 1
+  text_contains_all "$if_lines" 'dependabot[bot]' "hashFiles('trivy.sarif')"
+}
+
+migration_dry_run_uses_base_compose_file() {
+  local script=scripts/migration-dry-run.sh compose_lines
+  compose_lines=$(grep 'docker compose' "$script") || return 1
+  text_contains_all "$compose_lines" '-f docker-compose.yml' || return 1
+  file_lacks "$script" docker-compose.override.yml
+}
+
+package_test_script_is_split() {
+  local file="$1"
+  grep -q '"test":' "$file" || return 0
+  grep -Eq '"test:(unit|integration)":' "$file"
+}
+
+packages_with_tests_run_in_ci() {
+  local file
+  while IFS= read -r file; do
+    package_test_script_is_split "$file" || return 1
+  done < <(find apps packages modules infra -name package.json -not -path '*/node_modules/*')
+}
+
 check "compose file is valid" docker compose config --quiet
 check "compose defines workspace and gitleaks services" compose_has_workspace_and_gitleaks
 check "workspace image is pinned by version and digest" file_matches Dockerfile "$node_image_pattern"
@@ -555,6 +586,11 @@ check "packages write is granted only to the publish job" packages_write_only_in
 check "security-events write is granted only to the image job" grant_only_in_job 'security-events: write' image
 check "publish runs only on a push to main" publish_runs_on_push_to_main
 check "publish waits for every gate job" publish_waits_for_every_gate
+check "trivy limits severities when it writes SARIF" trivy_limits_sarif_severities
+check "the SARIF upload skips Dependabot runs and a missing report" upload_sarif_skips_dependabot_and_missing_report
+check "the migration dry run uses only the base compose file" migration_dry_run_uses_base_compose_file
+check "the workflow never continues on error" file_lacks "$workflow" continue-on-error
+check "every package that has a test script also has a test script that CI runs" packages_with_tests_run_in_ci
 check "every job has a 20 minute timeout" every_job_times_out_at_twenty_minutes
 check "the image job builds once with buildx and the GitHub cache, tagged sha-" image_job_builds_and_caches_sha_image
 check "trivy fails on fixable high and critical findings and uploads SARIF" image_job_scans_with_trivy
