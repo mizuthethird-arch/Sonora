@@ -1,0 +1,8 @@
+{
+  "name": "@sonora/module-template",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@sonora/config": "workspace:*"
+  }
+}
