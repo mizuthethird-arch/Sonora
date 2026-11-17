@@ -171,13 +171,15 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+packageExtensionsChecksum: sha256-g0U2/rp6g1Uw4s8/eTKVLbUszT2QAnNvvTCzYTLaQvI=
+
 importers:
 
   .:
     devDependencies:
       dependency-cruiser:
         specifier: 18.7.2
-        version: 18.7.2
+        version: 18.7.2(typescript@6.0.3)
       typescript:
         specifier: 6.0.3
         version: 6.0.3
@@ -1017,6 +1019,8 @@ packages:
     resolution: {integrity: sha512-3Pkco0Kx3GI8tG6DTUDfl9RSZVOXMqD+lvili8m0qw2+zhGFcZMyPspUgb7Crqps1UkL23SFXslpj7a9hj11+A==}
     engines: {node: ^22||^24||>=26}
     hasBin: true
+    peerDependencies:
+      typescript: '*'
 
   destr@2.0.5:
     resolution: {integrity: sha512-ugFTXCtDZunbzasqBxrK93Ik/DRYsO6S/fedkWEMKqt04xZ4csmnmwGDBAb07QWNaGMAmnTIemsYZCksjATwsA==}
@@ -2593,7 +2597,7 @@ snapshots:
 
   depd@2.0.0: {}
 
-  dependency-cruiser@18.7.2:
+  dependency-cruiser@18.7.2(typescript@6.0.3):
     dependencies:
       acorn: 8.19.0
       acorn-jsx: 5.3.2(acorn@8.19.0)
@@ -2612,6 +2616,7 @@ snapshots:
       safe-regex: 2.1.1
       semver: 7.8.6
       tsconfig-paths-webpack-plugin: 4.2.0
+      typescript: 6.0.3
       watskeburt: 6.0.0
 
   destr@2.0.5: {}
