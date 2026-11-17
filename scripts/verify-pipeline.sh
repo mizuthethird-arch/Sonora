@@ -123,6 +123,89 @@ hooks_are_activated() {
   [ "$(git config core.hooksPath)" = .githooks ]
 }
 
+compose_defines_development_services() {
+  local service
+  for service in mysql redis s3 mailpit traefik api media-worker; do
+    compose_has_default_service "$service" || return 1
+  done
+}
+
+image_line_pinned_by_digest() {
+  file_matches docker-compose.yml "image: .*$1.*@sha256:[0-9a-f]{64}"
+}
+
+dev_service_images_pinned_by_digest() {
+  image_line_pinned_by_digest redis || return 1
+  image_line_pinned_by_digest adobe/s3mock || return 1
+  image_line_pinned_by_digest axllent/mailpit || return 1
+  image_line_pinned_by_digest traefik || return 1
+  file_matches infra/media-worker/Dockerfile '^FROM node:24-trixie-slim@sha256:[0-9a-f]{64}'
+}
+
+only_traefik_publishes_a_port() {
+  [ "$(docker compose config | grep -c 'published:')" -eq 1 ]
+}
+
+mysql_init_creates_module_databases() {
+  file_contains infra/mysql/init/01-module-databases.sh \
+    identity catalog media playback library search recommender realtime notification analytics platform
+}
+
+media_worker_runs_and_installs_ffmpeg() {
+  file_contains docker-compose.yml ffmpeg -version || return 1
+  file_contains infra/media-worker/Dockerfile 'apt-get install' ffmpeg
+}
+
+makefile_has_development_targets() {
+  local target
+  for target in up down down-v seed migrate test logs doctor check-databases env-check; do
+    grep -Eq "^${target}:" Makefile || return 1
+  done
+}
+
+env_file_is_rejected() {
+  local output
+  output=$(./scripts/check-env.sh "$1" 2>&1) && return 1
+  [ -n "$output" ]
+}
+
+env_file_rejected_naming_key() {
+  local output
+  output=$(./scripts/check-env.sh "$1" 2>&1) && return 1
+  grep -Fq MODULE_DB_PASSWORD <<<"$output"
+}
+
+env_file_accepted_without_echoing_value() {
+  local output
+  output=$(./scripts/check-env.sh "$1" 2>&1) || return 1
+  ! grep -Fq dev-only <<<"$output"
+}
+
+check_env_rejects_bad_files() {
+  local empty filled missing verdict=0
+  empty=$(mktemp)
+  filled=$(mktemp)
+  missing="$filled.missing"
+  printf 'MODULE_DB_PASSWORD=\n' >"$empty"
+  printf 'MODULE_DB_PASSWORD=dev-only\n' >"$filled"
+
+  env_file_is_rejected "$missing" || verdict=1
+  env_file_rejected_naming_key "$empty" || verdict=1
+  env_file_accepted_without_echoing_value "$filled" || verdict=1
+
+  rm -f "$empty" "$filled"
+  return "$verdict"
+}
+
+make_up_stops_on_empty_key() {
+  local env_file output verdict=0
+  env_file=$(mktemp)
+  printf 'MODULE_DB_PASSWORD=\n' >"$env_file"
+  output=$(timeout 20 make up ENV_FILE="$env_file" 2>&1) && verdict=1
+  rm -f "$env_file"
+  [ "$verdict" -eq 0 ] && grep -Fq MODULE_DB_PASSWORD <<<"$output"
+}
+
 check "compose file is valid" docker compose config --quiet
 check "compose defines workspace and gitleaks services" compose_has_workspace_and_gitleaks
 check "workspace image is pinned by version and digest" file_matches Dockerfile "$node_image_pattern"
@@ -167,6 +250,18 @@ check "git hooks are activated (run scripts/setup-hooks.sh)" hooks_are_activated
 check "secret scan finds no leaks" docker compose -f docker-compose.yml run --rm gitleaks
 check "pipeline command passes inside the workspace container as CI runs it" \
   docker compose -f docker-compose.yml run --rm --build workspace pnpm run ci
+check "compose defines the development services" compose_defines_development_services
+check "development service images are pinned by digest" dev_service_images_pinned_by_digest
+check "only traefik publishes a host port" only_traefik_publishes_a_port
+check "mysql init creates one database and user per module" mysql_init_creates_module_databases
+check "traefik routes the three hostnames" file_contains infra/traefik/dynamic.yml \
+  api.sonora.localhost mail.sonora.localhost s3.sonora.localhost
+check "media-worker healthcheck runs ffmpeg -version and the image installs ffmpeg" media_worker_runs_and_installs_ffmpeg
+check "Makefile has the development targets" makefile_has_development_targets
+check ".env.example exists with the required key empty" file_has_lines .env.example 'MODULE_DB_PASSWORD='
+check "check-env rejects a missing file, an empty required key, and accepts a filled one" check_env_rejects_bad_files
+check "make up stops on an empty required key" make_up_stops_on_empty_key
+check "api has a dev script for hot reload" file_contains apps/api/package.json '"dev":'
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"
