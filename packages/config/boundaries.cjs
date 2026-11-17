@@ -31,6 +31,14 @@ module.exports = {
       to: { path: "^(modules|apps)/" },
     },
     {
+      name: "no-circular-module-facades",
+      severity: "error",
+      comment:
+        "Two module facades must not depend on each other, directly or through other facades. See docs/boundaries.md#no-circular-module-facades",
+      from: { path: "^modules/[^/]+/src/public/" },
+      to: { path: "^modules/[^/]+/src/public/", circular: true },
+    },
+    {
       name: "no-database-client-outside-infrastructure",
       severity: "error",
       comment:
