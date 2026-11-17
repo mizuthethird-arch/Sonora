@@ -1,0 +1,17 @@
+{
+  "name": "@sonora/seed",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "seed": "node src/cli.ts"
+  },
+  "dependencies": {
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "vitest": "5.1.0"
+  }
+}
