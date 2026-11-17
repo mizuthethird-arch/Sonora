@@ -265,6 +265,189 @@ readme_explains_password_change_and_checksum_stop() {
   readme_line_has_both checksum stops
 }
 
+job_text() {
+  awk -v id="$1" '
+    $0 == "  " id ":" { found = 1; print; next }
+    found && /^  [^ #][^ :]*:/ { exit }
+    found { print }
+  ' "$workflow"
+}
+
+text_contains_all() {
+  local text="$1" needle
+  shift
+  for needle in "$@"; do
+    grep -Fq -- "$needle" <<<"$text" || return 1
+  done
+}
+
+job_needs() {
+  local job="$1" needed="$2" text
+  text=$(job_text "$job")
+  grep -Eq "^ +- +$needed *\$|needs:.*[^a-z_-]$needed([^a-z_-]|\$)" <<<"$text"
+}
+
+grant_only_in_job() {
+  local grant="$1" job="$2" text
+  [ "$(grep -cF -- "$grant" "$workflow")" -eq 1 ] || return 1
+  text=$(job_text "$job")
+  text_contains_all "$text" "$grant"
+}
+
+workflow_permissions_block() {
+  awk '/^permissions:/ { found = 1; next } found && /^[^ #]/ { exit } found { print }' "$workflow"
+}
+
+workflow_grants_only_read() {
+  local block
+  block=$(workflow_permissions_block)
+  text_contains_all "$block" 'contents: read' || return 1
+  ! grep -Eq ':[[:space:]]*write' <<<"$block"
+}
+
+packages_write_only_in_publish() {
+  grant_only_in_job 'packages: write' publish && workflow_grants_only_read
+}
+
+if_line_pattern='^ *(- +)?if:'
+
+publish_runs_on_push_to_main() {
+  local text if_line
+  text=$(job_text publish)
+  if_line=$(grep -E "$if_line_pattern" <<<"$text") || return 1
+  text_contains_all "$if_line" 'refs/heads/main' push && job_needs publish image
+}
+
+every_job_times_out_at_twenty_minutes() {
+  [ "$(grep -Ec '^ +timeout-minutes: 20 *$' "$workflow")" -eq 6 ]
+}
+
+workflow_has_six_jobs() {
+  local id
+  for id in checks integration migration image publish ci; do
+    file_matches "$workflow" "^  $id:" || return 1
+  done
+}
+
+ci_gate_needs_every_job() {
+  local job
+  for job in checks integration migration image publish; do
+    job_needs ci "$job" || return 1
+  done
+}
+
+ci_gate_checks_results() {
+  local text
+  text=$(job_text ci)
+  text_contains_all "$text" 'if: always()' 'needs.*.result' failure cancelled
+}
+
+ci_gate_job_is_ready() {
+  ci_gate_needs_every_job && ci_gate_checks_results
+}
+
+image_job_builds_and_caches_sha_image() {
+  local text
+  text=$(job_text image)
+  text_contains_all "$text" docker/build-push-action 'cache-from: type=gha' 'cache-to: type=gha' 'sha-'
+}
+
+image_job_scans_with_trivy() {
+  local text
+  text=$(job_text image)
+  text_contains_all "$text" aquasecurity/trivy-action 'ignore-unfixed: true' 'HIGH,CRITICAL' "exit-code: '1'" upload-sarif
+}
+
+sarif_upload_skips_fork_pull_requests() {
+  local text if_lines
+  text=$(job_text image)
+  if_lines=$(grep -E "$if_line_pattern" <<<"$text") || return 1
+  text_contains_all "$if_lines" github.repository github.event.pull_request.head.repo.full_name
+}
+
+unit_tests_write_uploaded_junit_report() {
+  file_contains "$workflow" upload-artifact junit
+}
+
+jobs_run_their_test_suites() {
+  local text
+  text=$(job_text checks)
+  text_contains_all "$text" 'pnpm run test:unit' || return 1
+  text=$(job_text integration)
+  text_contains_all "$text" 'pnpm run test:integration' || return 1
+  text=$(job_text migration)
+  text_contains_all "$text" scripts/migration-dry-run.sh
+}
+
+two_attempts_pattern='for [A-Za-z_]+ in 1 2( |;|$)|seq 1 2|ATTEMPTS=2|attempts=2'
+
+image_pulls_retry_with_warning() {
+  file_contains "$workflow" scripts/ci-pull.sh || return 1
+  [ -x scripts/ci-pull.sh ] || return 1
+  file_contains scripts/ci-pull.sh 'docker compose' pull '::warning::' || return 1
+  file_matches scripts/ci-pull.sh "$two_attempts_pattern"
+}
+
+test_suites_are_split() {
+  file_contains package.json '"test:unit"' '"test:integration"' || return 1
+  file_contains apps/api/package.json '"test:unit"' '"test:integration"'
+}
+
+migration_dry_run_passes() {
+  [ -x scripts/migration-dry-run.sh ] && scripts/migration-dry-run.sh
+}
+
+api_stage_pattern='^FROM node:24\.22\.3-alpine@sha256:[0-9a-f]{64} AS api$'
+
+dockerfile_has_production_api_stage() {
+  local api_line user_line
+  api_line=$(grep -nE "$api_stage_pattern" Dockerfile | cut -d: -f1) || return 1
+  user_line=$(grep -nxF 'USER node' Dockerfile | tail -n 1 | cut -d: -f1) || return 1
+  [ "$user_line" -gt "$api_line" ] || return 1
+  file_matches Dockerfile '^CMD \["node", ?"dist/index\.js"\]'
+}
+
+api_container=sonora-api-verify
+
+remove_api_container() {
+  docker rm -f "$api_container" >/dev/null 2>&1 || true
+}
+
+build_api_image() {
+  docker build --target api -t sonora-api:verify . >/dev/null 2>&1
+}
+
+start_api_container() {
+  docker run -d --name "$api_container" sonora-api:verify >/dev/null 2>&1
+}
+
+api_health_body() {
+  docker exec "$api_container" wget -q -O - http://127.0.0.1:3000/health 2>/dev/null || true
+}
+
+api_is_healthy() {
+  [ "$(api_health_body)" = '{"status":"ok"}' ]
+}
+
+wait_for_api_health() {
+  local attempt
+  for attempt in $(seq 1 60); do
+    api_is_healthy && return 0
+    sleep 1
+  done
+  return 1
+}
+
+api_image_answers_health() {
+  local verdict=1
+  remove_api_container
+  if build_api_image && start_api_container && wait_for_api_health; then
+    verdict=0
+  fi
+  remove_api_container
+  return "$verdict"
+}
+
 check "compose file is valid" docker compose config --quiet
 check "compose defines workspace and gitleaks services" compose_has_workspace_and_gitleaks
 check "workspace image is pinned by version and digest" file_matches Dockerfile "$node_image_pattern"
@@ -329,6 +512,23 @@ check "the module database check does not put the password on the command line" 
 check "the api dev script calls a small commented script" api_dev_runs_commented_script
 check "the Makefile marks the seed credentials as dummies" makefile_marks_seed_credentials_as_dummies
 check "the README explains password changes and the checksum stop" readme_explains_password_change_and_checksum_stop
+check "ci has the six jobs" workflow_has_six_jobs
+check "the ci gate job needs every other job and fails on failure or cancellation" ci_gate_job_is_ready
+check "packages write is granted only to the publish job" packages_write_only_in_publish
+check "security-events write is granted only to the image job" grant_only_in_job 'security-events: write' image
+check "publish runs only on a push to main" publish_runs_on_push_to_main
+check "every job has a 20 minute timeout" every_job_times_out_at_twenty_minutes
+check "the image job builds once with buildx and the GitHub cache, tagged sha-" image_job_builds_and_caches_sha_image
+check "trivy fails on fixable high and critical findings and uploads SARIF" image_job_scans_with_trivy
+check "SARIF upload is skipped for fork pull requests" sarif_upload_skips_fork_pull_requests
+check "unit tests write a JUnit report that is uploaded" unit_tests_write_uploaded_junit_report
+check "the checks job runs the unit tests and the integration job runs the integration tests" jobs_run_their_test_suites
+check "image pulls are retried with a warning" image_pulls_retry_with_warning
+check "the root and the api package split unit and integration tests" test_suites_are_split
+check "unit tests run without a database" timeout 600 docker compose run --rm --no-deps workspace pnpm run test:unit
+check "the migration dry run applies the migrations and a second run is a no-op" migration_dry_run_passes
+check "the Dockerfile has a production api stage" dockerfile_has_production_api_stage
+check "the production api image starts and answers /health" api_image_answers_health
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"
