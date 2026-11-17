@@ -59,12 +59,29 @@ async function downloadWithRetry(url: string, deps: SeedDeps): Promise<DownloadR
   return deps.download(url);
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// Returns undefined and records the track in failed when the download throws; a thrown download is not retried.
+async function downloadTrack(track: Track, deps: SeedDeps, report: SeedReport): Promise<DownloadResult | undefined> {
+  try {
+    return await downloadWithRetry(track.downloadUrl, deps);
+  } catch (error) {
+    report.failed.push({ id: track.id, reason: errorMessage(error) });
+    return undefined;
+  }
+}
+
 async function seedTrack(track: Track, deps: SeedDeps, report: SeedReport): Promise<void> {
   if (await deps.storage.has(track.id, track.sha256)) {
     report.alreadyPresent += 1;
     return;
   }
-  const result = await downloadWithRetry(track.downloadUrl, deps);
+  const result = await downloadTrack(track, deps, report);
+  if (result === undefined) {
+    return;
+  }
   if (RETRYABLE_STATUSES.includes(result.status)) {
     report.skipped.push({ id: track.id, reason: `HTTP ${result.status} after ${RETRY_DELAYS_MS.length} retries` });
     return;
