@@ -4,6 +4,28 @@ services:
       context: .
       target: workspace
     working_dir: /workspace
+    environment:
+      DATABASE_URL: mysql://root@mysql:3306/sonora
+      CHECKPOINT_DISABLE: "1"
+      PRISMA_HIDE_UPDATE_MESSAGE: "1"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  # Development and CI only: root without a password, no published ports, data on tmpfs.
+  # Never publish a port or reuse this service for staging or production.
+  mysql:
+    image: mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
 
   gitleaks:
     image: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
