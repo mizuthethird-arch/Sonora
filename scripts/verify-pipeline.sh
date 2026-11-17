@@ -88,6 +88,11 @@ hook_scans_staged_changes() {
   file_contains .githooks/pre-commit gitleaks '--staged'
 }
 
+commit_msg_hook_runs_commitlint() {
+  [ -x .githooks/commit-msg ] || return 1
+  file_contains .githooks/commit-msg 'commitlint' 'packages/config/commitlint.config.js'
+}
+
 hook_setup_script_is_ready() {
   [ -x scripts/setup-hooks.sh ] || return 1
   file_contains scripts/setup-hooks.sh 'core.hooksPath .githooks'
@@ -126,6 +131,7 @@ check "workflow runs gitleaks and the pipeline through docker compose without th
 check "workflow pins actions to a commit sha" workflow_pins_actions_to_sha
 check "workflow requests read-only permissions" file_contains "$workflow" 'contents: read'
 check "pre-commit hook scans staged changes for secrets" hook_scans_staged_changes
+check "commit-msg hook checks the message with the shared commitlint config" commit_msg_hook_runs_commitlint
 check "dependabot covers npm, docker, docker-compose and github-actions" file_has_lines .github/dependabot.yml \
   '  - package-ecosystem: npm' \
   '  - package-ecosystem: docker' \
