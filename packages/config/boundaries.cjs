@@ -30,6 +30,14 @@ module.exports = {
       from: { path: "^packages/" },
       to: { path: "^(modules|apps)/" },
     },
+    {
+      name: "no-database-client-outside-infrastructure",
+      severity: "error",
+      comment:
+        "Database clients are imported only inside modules/<name>/src/infrastructure, so a module owns its data. apps/api/src/database holds the current Prisma setup until the schema moves into modules. See docs/boundaries.md#no-database-client-outside-infrastructure",
+      from: { pathNot: ["^modules/[^/]+/src/infrastructure/", "^apps/api/src/database/"] },
+      to: { path: "(^|/node_modules/)(@prisma/client|@prisma/adapter-mariadb|mysql2?|mariadb|knex|drizzle-orm)(/|$)" },
+    },
   ],
   options: {
     doNotFollow: { path: "node_modules" },
