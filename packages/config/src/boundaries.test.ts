@@ -21,4 +21,30 @@ describe("module boundaries", () => {
     expect(result.status).not.toBe(0);
     expect(result.output).toContain("no-module-internals");
   });
+
+  it("pass when a module imports the public entry of another module", () => {
+    const result = runBoundaryCheck("module-imports-public");
+
+    expect(result.status).toBe(0);
+  });
+
+  it("fail when an app reaches past the public entry of a module", () => {
+    const result = runBoundaryCheck("app-past-public-entry");
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("no-app-past-public-entry");
+  });
+
+  it("pass when an app uses module.ts and public entries", () => {
+    const result = runBoundaryCheck("app-uses-public-entries");
+
+    expect(result.status).toBe(0);
+  });
+
+  it("fail when a package imports a module", () => {
+    const result = runBoundaryCheck("package-imports-module");
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("no-package-imports-module-or-app");
+  });
 });
