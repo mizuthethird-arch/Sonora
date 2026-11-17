@@ -3,7 +3,7 @@ packages:
   - "packages/*"
 
 allowBuilds:
-  '@prisma/engines': true
-  prisma: true
+  '@prisma/engines': false
+  prisma: false
 
 storeDir: node_modules/.pnpm-store
