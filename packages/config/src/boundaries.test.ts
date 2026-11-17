@@ -60,4 +60,17 @@ describe("module boundaries", () => {
 
     expect(result.status).toBe(0);
   });
+
+  it("fail when two module facades depend on each other", () => {
+    const result = runBoundaryCheck("circular-module-facades");
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("no-circular-module-facades");
+  });
+
+  it("pass when modules, apps and packages import types from packages/contracts", () => {
+    const result = runBoundaryCheck("type-only-contracts-everywhere");
+
+    expect(result.status).toBe(0);
+  });
 });
