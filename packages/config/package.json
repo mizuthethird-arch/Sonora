@@ -2,6 +2,12 @@
   "name": "@sonora/config",
   "private": true,
   "type": "module",
+  "exports": {
+    "./eslint": "./eslint.config.js",
+    "./prettier": "./prettier.config.js",
+    "./tsconfig.base.json": "./tsconfig.base.json",
+    "./boundaries": "./boundaries.cjs"
+  },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

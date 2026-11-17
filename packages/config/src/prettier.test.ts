@@ -4,9 +4,9 @@ import prettierConfig from "../prettier.config.js";
 
 describe("the shared Prettier config", () => {
   it("uses double quotes, semicolons and trailing commas", async () => {
-    const formatted = await format("const names = ['a',\n'b']\n", { ...prettierConfig, parser: "typescript", printWidth: 10 });
+    const formatted = await format("const options = {\n  a: 'x',\n  b: 'y'\n}\n", { ...prettierConfig, parser: "typescript" });
 
-    expect(formatted).toBe('const names = [\n  "a",\n  "b",\n];\n');
+    expect(formatted).toBe('const options = {\n  a: "x",\n  b: "y",\n};\n');
   });
 
   it("allows lines up to 120 characters", () => {
