@@ -38,6 +38,19 @@ This file is a contract for the local development environment. Later steps build
 | api | Express app with hot reload | `api.sonora.localhost` through Traefik |
 | media-worker | Debian 13 image with ffmpeg 7.1 and libopus. Healthcheck: `ffmpeg -version` | Docker network only |
 
+## CI
+
+`.github/workflows/ci.yml` runs on pull requests and pushes to `dev` and `main`. Every command goes through `docker compose`, the same entry point as local development.
+
+- `checks`: secret scan, PR title lint, audit, lint, boundary check, typecheck, unit tests, build.
+- `integration`: integration tests against MySQL.
+- `migration`: migration dry run.
+- `image`: builds the `api` image once, scans it with Trivy and uploads SARIF.
+- `publish`: pushes that same image to ghcr.io on pushes to `main`. It is never rebuilt.
+- `ci`: the required gate. It fails when any job above failed or was cancelled.
+
+JUnit reports are uploaded as the `junit-unit` and `junit-integration` artifacts.
+
 ## Hostnames
 
 Traefik serves these hostnames on port 80 of 127.0.0.1. Set `TRAEFIK_PORT` in `.env` to use another port.

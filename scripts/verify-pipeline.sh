@@ -448,6 +448,37 @@ api_image_answers_health() {
   return "$verdict"
 }
 
+compose_run_lines() {
+  grep -F 'docker compose -f docker-compose.yml run' "$workflow"
+}
+
+workflow_runs_script_via_compose() {
+  local lines
+  lines=$(compose_run_lines) || return 1
+  grep -Eq "pnpm run $1( |\$)" <<<"$lines"
+}
+
+workflow_runs_gate_scripts_via_compose() {
+  local script
+  for script in audit:dependencies lint check:boundaries typecheck test:unit test:integration build; do
+    workflow_runs_script_via_compose "$script" || return 1
+  done
+}
+
+gitleaks_and_gates_run_via_compose() {
+  file_contains "$workflow" 'run: docker compose -f docker-compose.yml run --rm gitleaks' || return 1
+  workflow_runs_gate_scripts_via_compose
+}
+
+compose_lines_without_base_file() {
+  grep -F 'docker compose' "$workflow" | grep -Fv -- '-f docker-compose.yml'
+}
+
+workflow_never_uses_dev_override() {
+  file_lacks "$workflow" docker-compose.override.yml || return 1
+  [ -z "$(compose_lines_without_base_file)" ]
+}
+
 check "compose file is valid" docker compose config --quiet
 check "compose defines workspace and gitleaks services" compose_has_workspace_and_gitleaks
 check "workspace image is pinned by version and digest" file_matches Dockerfile "$node_image_pattern"
@@ -460,7 +491,7 @@ check "check:boundaries runs dependency-cruiser with the boundaries config" file
   '"check:boundaries": "depcruise .* --config packages/config/boundaries.cjs'
 check "ci runs the boundary check before the tests" file_matches package.json '"ci": ".*check:boundaries.*run test'
 check "workflow runs the boundary check as its own step" file_contains "$workflow" \
-  'run: docker compose -f docker-compose.yml run --rm workspace pnpm run check:boundaries'
+  'run: docker compose -f docker-compose.yml run --rm --no-deps workspace pnpm run check:boundaries'
 check "workspace declares apps and packages" file_contains pnpm-workspace.yaml 'apps/*' 'packages/*'
 check "base compose has no bind mount, override adds it" bind_mount_only_in_override
 check "dockerignore excludes dependencies, git data and secrets" file_has_lines .dockerignore \
@@ -470,10 +501,9 @@ check "workflow runs on pull requests to dev and main" workflow_trigger_has_bran
 check "workflow runs on pushes to dev and main" workflow_trigger_has_branches push
 check "workflow runner is pinned" file_contains "$workflow" 'runs-on: ubuntu-24.04'
 check "workflow cancels superseded runs only on pull requests" file_contains "$workflow" "$cancel_only_on_pull_requests"
-check "workflow runs gitleaks and the pipeline through docker compose without the dev override" \
-  file_contains "$workflow" \
-  'run: docker compose -f docker-compose.yml run --rm gitleaks' \
-  'run: docker compose -f docker-compose.yml run --rm workspace pnpm run ci'
+check "workflow runs gitleaks and each gate script (audit, lint, boundaries, typecheck, unit, integration, build) through docker compose -f docker-compose.yml" \
+  gitleaks_and_gates_run_via_compose
+check "the workflow never uses the dev override file" workflow_never_uses_dev_override
 check "workflow pins actions to a commit sha" workflow_pins_actions_to_sha
 check "workflow requests read-only permissions" file_contains "$workflow" 'contents: read'
 check "pre-commit hook scans staged changes for secrets" hook_scans_staged_changes

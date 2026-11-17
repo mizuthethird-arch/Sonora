@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
+    "test:unit": "vitest run",
     "typecheck": "tsc --noEmit",
     "seed": "node src/cli.ts"
   },

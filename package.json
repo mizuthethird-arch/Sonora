@@ -9,6 +9,8 @@
     "lint": "pnpm -r --if-present run lint",
     "typecheck": "pnpm -r --if-present run typecheck",
     "test": "pnpm -r --if-present run test",
+    "test:unit": "pnpm -r --if-present run test:unit",
+    "test:integration": "pnpm -r --if-present run test:integration",
     "build": "pnpm -r --if-present run build",
     "commitlint": "pnpm --filter @sonora/config exec commitlint --config commitlint.config.js",
     "check:boundaries": "depcruise . --config packages/config/boundaries.cjs --output-type err-long",

@@ -9,3 +9,4 @@ coverage
 .DS_Store
 **/generated
 seed-report.json
+reports
