@@ -54,6 +54,20 @@ function makeDownload(script: Record<string, DownloadResult[]>): { download: Dow
   return { download, calls };
 }
 
+// Like makeDownload, but a scripted entry that is an Error is thrown instead of returned.
+function makeThrowingDownload(script: Record<string, (DownloadResult | Error)[]>): Download {
+  return async (url) => {
+    const next = script[url]?.shift();
+    if (next === undefined) {
+      throw new Error(`no scripted response left for ${url}`);
+    }
+    if (next instanceof Error) {
+      throw next;
+    }
+    return next;
+  };
+}
+
 function makeDeps(storage: Storage, download: Download): { deps: SeedDeps; sleeps: number[] } {
   const sleeps: number[] = [];
   const deps: SeedDeps = {
@@ -221,5 +235,34 @@ describe("runSeed", () => {
     await runSeed([track], deps);
 
     expect(storage.objects.get("track-001")?.sha256).toBe(createHash("sha256").update(audio).digest("hex"));
+  });
+
+  it("records a download that throws in failed with its message and continues with the next track", async () => {
+    const storage = new MemoryStorage();
+    const reset = makeTrack("track-reset", audio);
+    const good = makeTrack("track-good", audio);
+    const download = makeThrowingDownload({
+      [reset.downloadUrl]: [new Error("connect ECONNRESET")],
+      [good.downloadUrl]: [{ status: 200, body: audio }],
+    });
+    const { deps, sleeps } = makeDeps(storage, download);
+
+    const report = await runSeed([reset, good], deps);
+
+    expect(report.failed).toEqual([{ id: "track-reset", reason: expect.stringContaining("ECONNRESET") }]);
+    expect(report.stored).toBe(1);
+    expect(storage.objects.has("track-good")).toBe(true);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("checks storage errors are not swallowed", async () => {
+    const storage: Storage = {
+      has: () => Promise.reject(new Error("storage down")),
+      put: () => Promise.resolve(),
+    };
+    const track = makeTrack("track-001", audio);
+    const { deps } = makeDeps(storage, makeDownload({}).download);
+
+    await expect(runSeed([track], deps)).rejects.toThrow("storage down");
   });
 });

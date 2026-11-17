@@ -12,6 +12,10 @@ const routes: Record<string, Route> = {
 };
 
 function respond(request: IncomingMessage, response: ServerResponse): void {
+  if (request.url === "/hang") {
+    // Never answers, so the request stays open until the client gives up or the server closes.
+    return;
+  }
   const route = routes[request.url ?? ""];
   if (route === undefined) {
     response.writeHead(500);
@@ -35,6 +39,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Drops any request still open on /hang so that close can finish.
+  server.closeAllConnections();
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
@@ -58,5 +64,9 @@ describe("fetchDownload", () => {
     const result = await fetchDownload(`${baseUrl}/busy`);
 
     expect(result.status).toBe(429);
+  });
+
+  it("rejects when the server does not answer within the timeout", async () => {
+    await expect(fetchDownload(`${baseUrl}/hang`, 100)).rejects.toThrow();
   });
 });
