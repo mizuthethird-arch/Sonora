@@ -2,12 +2,18 @@ import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { PrismaClient } from "../generated/prisma/client.js";
 
-const prisma = new PrismaClient({ adapter: new PrismaMariaDb(process.env["DATABASE_URL"] ?? "") });
+const databaseUrl = process.env["DATABASE_URL"];
+if (!databaseUrl) {
+  throw new Error("DATABASE_URL is not set, the global setup should have provided it");
+}
+
+const prisma = new PrismaClient({ adapter: new PrismaMariaDb(databaseUrl) });
 
 const UNIQUE_VIOLATION = { code: "P2002" };
 const FOREIGN_KEY_VIOLATION = { code: "P2003" };
 const VALUE_TOO_LONG = { code: "P2000" };
 const MISSING_ID = "00000000-0000-7000-8000-000000000000";
+const UUID_VERSION_7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const HOSTILE_TEXT = "🎵 Rós '; DROP TABLE User; -- <script>alert(1)</script>";
 
 function createUser(email = "listener@example.com") {
@@ -59,7 +65,7 @@ describe("users", () => {
   it("stores a user with generated id and timestamps", async () => {
     const user = await createUser();
 
-    expect(user.id).toHaveLength(36);
+    expect(user.id).toMatch(UUID_VERSION_7);
     expect(user.createdAt).toBeInstanceOf(Date);
     expect(user.updatedAt).toBeInstanceOf(Date);
   });
@@ -80,6 +86,28 @@ describe("users", () => {
     const tooLong = `${"a".repeat(250)}@x.co`;
 
     await expect(createUser(tooLong)).rejects.toMatchObject(VALUE_TOO_LONG);
+  });
+
+  it("accepts an email of exactly 254 characters", async () => {
+    const longest = `${"a".repeat(249)}@x.co`;
+
+    await expect(createUser(longest)).resolves.toMatchObject({ email: longest });
+  });
+
+  it("lets only one of two simultaneous sign-ups with the same email succeed", async () => {
+    const attempts = await Promise.allSettled([createUser("race@example.com"), createUser("race@example.com")]);
+
+    expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
+  });
+
+  it("leaves nothing behind when a transaction fails half way", async () => {
+    const failing = prisma.$transaction(async (transaction) => {
+      await transaction.user.create({ data: { email: "rollback@example.com", passwordHash: "test-hash", displayName: "Gone" } });
+      throw new Error("fail after the insert");
+    });
+
+    await expect(failing).rejects.toThrow("fail after the insert");
+    expect(await prisma.user.count()).toBe(0);
   });
 
   it("keeps hostile and unicode text as plain data", async () => {
@@ -138,6 +166,56 @@ describe("catalog", () => {
     await expect(createArtist("same-id")).rejects.toMatchObject(UNIQUE_VIOLATION);
   });
 
+  it("keeps one album per external source and id", async () => {
+    const artist = await createArtist();
+    const data = { title: "Album", artistId: artist.id, externalSource: "JAMENDO" as const, externalId: "album-1" };
+    await prisma.album.create({ data });
+
+    await expect(prisma.album.create({ data })).rejects.toMatchObject(UNIQUE_VIOLATION);
+  });
+
+  it("refuses to delete an artist that still has albums", async () => {
+    const artist = await createArtist();
+    await prisma.album.create({
+      data: { title: "Album", artistId: artist.id, externalSource: "JAMENDO", externalId: "album-1" },
+    });
+
+    await expect(prisma.artist.delete({ where: { id: artist.id } })).rejects.toMatchObject(FOREIGN_KEY_VIOLATION);
+  });
+
+  it("keeps the tracks of a deleted album as singles", async () => {
+    const artist = await createArtist();
+    const album = await prisma.album.create({
+      data: { title: "Album", artistId: artist.id, externalSource: "JAMENDO", externalId: "album-1" },
+    });
+    const track = await createTrack(artist.id);
+    await prisma.track.update({ where: { id: track.id }, data: { albumId: album.id } });
+
+    await prisma.album.delete({ where: { id: album.id } });
+
+    const kept = await prisma.track.findUniqueOrThrow({ where: { id: track.id } });
+    expect(kept.albumId).toBeNull();
+  });
+
+  it("rejects a licence longer than 64 characters", async () => {
+    const artist = await createArtist();
+
+    const track = prisma.track.create({
+      data: {
+        title: "Long licence",
+        artistId: artist.id,
+        durationSeconds: 60,
+        externalSource: "JAMENDO",
+        externalId: "long-licence",
+        license: "L".repeat(65),
+        downloadAllowed: true,
+        allowsDerivatives: true,
+      },
+    });
+
+    await expect(track).rejects.toMatchObject(VALUE_TOO_LONG);
+  });
+
   it("needs an existing artist for a track", async () => {
     await expect(createTrack(MISSING_ID)).rejects.toMatchObject(FOREIGN_KEY_VIOLATION);
   });
@@ -192,13 +270,29 @@ describe("catalog", () => {
 });
 
 describe("playlists", () => {
-  it("need an existing user and are private by default", async () => {
+  it("need an existing user", async () => {
     await expect(createPlaylist(MISSING_ID)).rejects.toMatchObject(FOREIGN_KEY_VIOLATION);
+  });
 
-    const user = await createUser();
-    const playlist = await createPlaylist(user.id);
+  it("are private by default", async () => {
+    const playlist = await createPlaylist((await createUser()).id);
 
     expect(playlist.isPublic).toBe(false);
+  });
+
+  it("reject a name longer than 100 characters", async () => {
+    const user = await createUser();
+
+    const playlist = prisma.playlist.create({ data: { userId: user.id, name: "n".repeat(101) } });
+
+    await expect(playlist).rejects.toMatchObject(VALUE_TOO_LONG);
+  });
+
+  it("reject a negative position", async () => {
+    const artist = await createArtist();
+    const playlist = await createPlaylist((await createUser()).id);
+
+    await expect(addToPlaylist(playlist.id, (await createTrack(artist.id)).id, -1)).rejects.toThrow();
   });
 
   it("keep one position per item", async () => {
@@ -268,6 +362,25 @@ describe("search", () => {
     `;
 
     expect(rows.map((row) => row.id)).toEqual([match.id]);
+  });
+});
+
+describe("search on names", () => {
+  it("finds artists and albums by words in their name", async () => {
+    const artist = await createArtist("sigur", "Sigur Ros");
+    await prisma.album.create({
+      data: { title: "Takk Together", artistId: artist.id, externalSource: "JAMENDO", externalId: "takk" },
+    });
+
+    const artists = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM Artist WHERE MATCH(name) AGAINST (${"sigur"} IN NATURAL LANGUAGE MODE)
+    `;
+    const albums = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM Album WHERE MATCH(title) AGAINST (${"takk"} IN NATURAL LANGUAGE MODE)
+    `;
+
+    expect(artists.map((row) => row.id)).toEqual([artist.id]);
+    expect(albums).toHaveLength(1);
   });
 });
 
