@@ -1,0 +1,13 @@
+{
+  "name": "@sonora/module-template",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "prettier": "@sonora/config/prettier",
+  "devDependencies": {
+    "@sonora/config": "workspace:*"
+  }
+}

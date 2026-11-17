@@ -26,6 +26,11 @@ jobs:
         run: docker compose -f docker-compose.yml run --rm gitleaks
       - name: Build workspace image
         run: docker compose -f docker-compose.yml build workspace
+      - name: Check the pull request title
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$PR_TITLE" | docker compose -f docker-compose.yml run --rm --no-deps -T workspace pnpm run --silent commitlint
       - name: Check module boundaries
         run: docker compose -f docker-compose.yml run --rm workspace pnpm run check:boundaries
       - name: Lint, typecheck, test, build
