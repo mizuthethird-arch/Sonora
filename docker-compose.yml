@@ -6,10 +6,13 @@ services:
     working_dir: /workspace
     environment:
       DATABASE_URL: mysql://root@mysql:3306/sonora
+      REDIS_URL: redis://redis:6379
       CHECKPOINT_DISABLE: "1"
       PRISMA_HIDE_UPDATE_MESSAGE: "1"
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   # Development and CI only: root without a password, no published ports, data on tmpfs.
