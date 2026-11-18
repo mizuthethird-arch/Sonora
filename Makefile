@@ -6,7 +6,7 @@ env-check:
 	./scripts/check-env.sh $(ENV_FILE)
 
 up: env-check
-	docker compose up -d --build --wait mysql redis s3 mailpit traefik api media-worker
+	docker compose up -d --build --wait mysql redis s3 mailpit traefik api media-worker meilisearch
 
 down:
 	docker compose down

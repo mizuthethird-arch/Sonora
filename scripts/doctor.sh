@@ -6,7 +6,7 @@ readonly DOCTOR_POLL_SECONDS=2
 readonly HEALTHY_STATUS="healthy"
 readonly MISSING_CONTAINER="no-container"
 
-SERVICES=(mysql redis s3 mailpit traefik api media-worker)
+SERVICES=(mysql redis s3 mailpit traefik api media-worker meilisearch)
 
 enter_repo_root() {
   cd "$(dirname "$0")/.."

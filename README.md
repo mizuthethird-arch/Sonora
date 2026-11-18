@@ -16,8 +16,8 @@ This file is a contract for the local development environment. Later steps build
 
 | Target | What it does |
 | --- | --- |
-| `make up` | Checks `.env`, builds and starts mysql, redis, s3, mailpit, traefik, api and media-worker, and waits until every container is healthy. |
-| `make doctor` | Asserts that every container above reports healthy within 120 seconds, prints a table, and exits non-zero otherwise. |
+| `make up` | Checks `.env`, builds and starts mysql, redis, s3, mailpit, traefik, api, media-worker and meilisearch, and waits until every container is healthy. |
+| `make doctor` | Asserts that every container above, including meilisearch, reports healthy within 120 seconds, prints a table, and exits non-zero otherwise. |
 | `make seed` | Loads the Creative Commons tracks listed in `infra/seed/manifest.json` into the S3 `originals` bucket, idempotently, and writes `seed-report.json`. |
 | `make migrate` | Applies the Prisma migrations to the database. |
 | `make test` | Runs the repository checks and tests inside the workspace container. |
@@ -37,6 +37,7 @@ This file is a contract for the local development environment. Later steps build
 | traefik | Traefik 3.6, routes `*.sonora.localhost` | Listens on 127.0.0.1, port 80 by default (see `TRAEFIK_PORT`) |
 | api | Express app with hot reload | `api.sonora.localhost` through Traefik |
 | media-worker | Debian 13 image with ffmpeg 7.1 and libopus. Healthcheck: `ffmpeg -version` | Docker network only |
+| meilisearch | Meilisearch v1.56.0, search index, runs in production mode with a master key from `.env` | Docker network only. This contract does not define a host port. |
 
 ## CI
 
@@ -79,6 +80,7 @@ Keys:
 | Key | Required | Notes |
 | --- | --- | --- |
 | `MODULE_DB_PASSWORD` | Yes | Password for the module database users. `make up` fails if it is empty. |
+| `MEILI_MASTER_KEY` | Yes | Master key for Meilisearch, at least 16 characters, only A-Z a-z 0-9 _ - . (no quotes). `make up` fails if it is empty, shorter or uses other characters. |
 | `TRAEFIK_PORT` | No | Host port for Traefik. Default: 80. |
 | `JAMENDO_CLIENT_ID` | No | Needed only to build a real manifest from Jamendo, which is a later step. |
 
