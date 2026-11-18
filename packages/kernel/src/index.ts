@@ -20,3 +20,4 @@ export {
   type ModuleRegistry,
 } from "./module.js";
 export { parseRole, roleProfile, ROLES, type Role, type RoleProfile } from "./role.js";
+export { bootRole, type BootDeps } from "./boot.js";
