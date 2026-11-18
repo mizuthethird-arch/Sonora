@@ -39,4 +39,4 @@ fi
 docker run --rm -v "$work:/data:ro" "$OASDIFF_IMAGE" breaking /data/base-openapi.json /data/current-openapi.json || true
 
 docker compose -f docker-compose.yml run --rm --no-deps -T -v "$work:/contracts-check:ro" workspace sh -c \
-  "cd $CONTRACT_DIR && node dist/cli/check.js /contracts-check/base-openapi.json /contracts-check/current-openapi.json /contracts-check/base-contract.json /contracts-check/current-contract.json"
+  "cd $CONTRACT_DIR && pnpm run --silent build >/dev/null && node dist/cli/check.js /contracts-check/base-openapi.json /contracts-check/current-openapi.json /contracts-check/base-contract.json /contracts-check/current-contract.json"
