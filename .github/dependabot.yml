@@ -12,11 +12,17 @@ updates:
           - react
           - react-dom
           - "@types/react*"
+        update-types:
+          - "minor"
+          - "patch"
       vite:
         patterns:
           - vite
           - "@vitejs/*"
           - "vite-plugin-*"
+        update-types:
+          - "minor"
+          - "patch"
       testing:
         patterns:
           - vitest
@@ -26,6 +32,9 @@ updates:
           - msw
           - playwright
           - "@playwright/*"
+        update-types:
+          - "minor"
+          - "patch"
       lint:
         patterns:
           - eslint
@@ -35,6 +44,9 @@ updates:
           - typescript-eslint
           - "@commitlint/*"
           - dependency-cruiser
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: docker
     directory: /
     target-branch: dev
@@ -44,6 +56,9 @@ updates:
       docker-base-images:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: github-actions
     directory: /
     target-branch: dev
