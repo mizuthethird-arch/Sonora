@@ -1,6 +1,6 @@
 import cors from "cors";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
-import { rateLimit } from "express-rate-limit";
+import { ipKeyGenerator, rateLimit, type Store } from "express-rate-limit";
 import { type ModuleDefinition, mountRouteRegistry } from "@sonora/kernel";
 import { allRouteGroups, buildMergedDocument, CONTRACT_VERSION } from "@sonora/contracts";
 
@@ -11,9 +11,14 @@ export type AppOptions = {
   readonly rateLimits?: RateLimits;
   // The NODE_ENV of the process. The OpenAPI document is not served when it is "production".
   readonly nodeEnv?: string;
+  // How many reverse proxies sit in front of the API (Traefik is one). Zero trusts no forwarded address.
+  readonly trustProxyHops?: number;
+  // Where each limiter keeps its counters. Each limiter needs its own store. Without it, counters live in memory for this process.
+  readonly rateLimitStore?: (scope: RateLimitScope) => Store;
 };
 
 export type RateLimit = { readonly max: number; readonly windowMs: number };
+export type RateLimitScope = "general" | "auth";
 export type RateLimits = { readonly general: RateLimit; readonly auth: RateLimit };
 
 // Proposed numbers for review: 300 requests a minute per IP for everything, and 10 a minute for /auth.
@@ -29,11 +34,14 @@ const FORGED_HEADERS = ["x-user-id", "x-profile-id"] as const;
 export function createApp(options: AppOptions = {}): Express {
   const app = express();
   app.disable("x-powered-by");
+  if (options.trustProxyHops !== undefined && options.trustProxyHops > 0) {
+    app.set("trust proxy", options.trustProxyHops);
+  }
   app.use(stripForgedHeaders);
   app.use(cors({ origin: options.webOrigin !== undefined ? [options.webOrigin] : false }));
   const limits = options.rateLimits ?? DEFAULT_RATE_LIMITS;
-  app.use("/auth", limiter(limits.auth));
-  app.use(limiter(limits.general));
+  app.use("/auth", limiter("auth", limits.auth, options.rateLimitStore?.("auth")));
+  app.use(limiter("general", limits.general, options.rateLimitStore?.("general")));
 
   app.get("/health", (_request, response) => {
     response.json({ status: "ok" });
@@ -65,12 +73,14 @@ function isForged(name: string): boolean {
 }
 
 // Per IP. Retry-After is the length of the window, an upper bound on when the caller may try again.
-function limiter(limit: RateLimit) {
+function limiter(scope: RateLimitScope, limit: RateLimit, store: Store | undefined) {
   return rateLimit({
     windowMs: limit.windowMs,
     limit: limit.max,
     standardHeaders: "draft-7",
     legacyHeaders: false,
+    store,
+    keyGenerator: (request) => ipKeyGenerator(request.ip ?? "unknown"),
     handler: (_request, response) => {
       response.set("Retry-After", String(Math.ceil(limit.windowMs / 1000)));
       response.status(429).json({ type: "about:blank", title: "Too Many Requests", status: 429 });

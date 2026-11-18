@@ -12,13 +12,13 @@ export default defineConfig({
         test: {
           name: "unit",
           include: ["src/**/*.test.ts"],
-          exclude: [...configDefaults.exclude, "src/database/**"],
+          exclude: [...configDefaults.exclude, "src/database/**", "src/redis/**"],
         },
       },
       {
         test: {
           name: "integration",
-          include: ["src/database/**/*.test.ts"],
+          include: ["src/database/**/*.test.ts", "src/redis/**/*.test.ts"],
           fileParallelism: false,
           globalSetup: ["src/database/test/global-setup.ts"],
         },

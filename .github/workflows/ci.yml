@@ -67,7 +67,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Pull images
-        run: ./scripts/ci-pull.sh mysql
+        run: ./scripts/ci-pull.sh mysql redis
       - name: Integration tests
         run: |
           mkdir -p reports && chmod 777 reports
