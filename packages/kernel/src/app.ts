@@ -1,9 +1,8 @@
 import express, { type Express } from "express";
 import helmet from "helmet";
 import { problemErrorHandler, notFoundHandler } from "./problem.js";
+import { type ReadinessCheck, runReadinessChecks } from "./readiness.js";
 import { requestId } from "./request-id.js";
-
-export type ReadinessCheck = () => Promise<void>;
 
 export type AppOptions = {
   role: "api";
@@ -25,8 +24,7 @@ export function createApp(options: AppOptions): Express {
   });
 
   app.get("/health/ready", async (_request, response) => {
-    const results = await Promise.allSettled(Object.values(options.readinessChecks).map((check) => check()));
-    const ready = results.every((result) => result.status === "fulfilled");
+    const ready = await runReadinessChecks(options.readinessChecks);
     response.status(ready ? 200 : 503).json({ status: ready ? "ok" : "unavailable" });
   });
 
