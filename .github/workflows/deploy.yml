@@ -1,0 +1,75 @@
+name: deploy
+
+# Reusable deploy job, called by staging.yml and production.yml. Never runs on its own.
+# The deploy key on the VPS is restricted by a forced command, so it can only run "deploy up".
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Target environment: staging or production'
+        required: true
+        type: string
+      tag:
+        description: 'Image tag to deploy: sha- followed by 7 lowercase hex characters'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: ${{ inputs.environment }}
+    env:
+      ENVIRONMENT: ${{ inputs.environment }}
+      TAG: ${{ inputs.tag }}
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+    steps:
+      - name: Validate the inputs and the environment variables
+        run: |
+          if [[ ! "$ENVIRONMENT" =~ ^(staging|production)$ ]]; then
+            echo "::error::environment must be staging or production"
+            exit 1
+          fi
+          if [[ ! "$TAG" =~ ^sha-[0-9a-f]{7}$ ]]; then
+            echo "::error::tag must be sha- followed by 7 lowercase hex characters"
+            exit 1
+          fi
+          if [[ -z "$DEPLOY_HOST" || -z "$DEPLOY_USER" ]]; then
+            echo "::error::DEPLOY_HOST and DEPLOY_USER must be set as variables for this environment"
+            exit 1
+          fi
+
+      - name: Write the deploy key and known_hosts to runner temp
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          umask 077
+          if [ -z "$SSH_KEY" ] || [ -z "$KNOWN_HOSTS" ]; then
+            echo "::error::DEPLOY_SSH_KEY and DEPLOY_KNOWN_HOSTS must be set as secrets for this environment"
+            exit 1
+          fi
+          printf '%s\n' "$SSH_KEY" > "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
+
+      - name: Run the deploy through the forced command
+        run: |
+          ssh -i "$RUNNER_TEMP/deploy_key" \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
+            -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" "deploy up $ENVIRONMENT $TAG"
+
+      - name: Remove the deploy key and known_hosts
+        if: always()
+        run: rm -f "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/known_hosts"
