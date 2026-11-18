@@ -1,0 +1,3 @@
+#!/bin/sh
+sh scripts/check-env-files.sh --staged || exit 1
+exec docker compose -f docker-compose.yml run --rm gitleaks git /repo --pre-commit --staged --redact --no-banner

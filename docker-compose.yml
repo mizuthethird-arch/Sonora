@@ -1,0 +1,122 @@
+services:
+  workspace:
+    build:
+      context: .
+      target: workspace
+    working_dir: /workspace
+    environment:
+      DATABASE_URL: mysql://root@mysql:3306/sonora
+      REDIS_URL: redis://redis:6379
+      CHECKPOINT_DISABLE: "1"
+      PRISMA_HIDE_UPDATE_MESSAGE: "1"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Development and CI only: root without a password, no published ports, data on tmpfs.
+  # Never publish a port or reuse this service for staging or production.
+  mysql:
+    image: mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MODULE_DB_PASSWORD: ${MODULE_DB_PASSWORD:-}
+    volumes:
+      - ./infra/mysql/init:/docker-entrypoint-initdb.d:ro
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  gitleaks:
+    image: zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+    profiles: [tools]
+    environment:
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: /repo
+    volumes:
+      - .:/repo:ro
+    command: ["git", "/repo", "--redact", "--no-banner"]
+
+  # Development only. Data is not persisted; no published ports.
+  redis:
+    image: redis:7-alpine@sha256:7f7d30b7fdd09467bac58198a1f166dd69789d348d4fe859cccb20e0cf287fbe
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Adobe S3Mock, reached through Traefik at s3.sonora.localhost. No published ports.
+  s3:
+    image: adobe/s3mock@sha256:ab01a6946750f451ca215a47e91030695b260e4003b8a5a6201d25029b8fca92
+    environment:
+      COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: originals,renditions,artwork
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/originals?max-keys=1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Catches outgoing mail. UI through Traefik at mail.sonora.localhost; SMTP stays on the network.
+  mailpit:
+    image: axllent/mailpit@sha256:23a2ef85bc50853ab3093645d1d64679afd8887e89da5e48a88940c172591a4e
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # The only service with a published port. Listens on 127.0.0.1 only, file provider only (no docker socket).
+  traefik:
+    image: traefik:v3.6@sha256:31267173a15b4944e797a76ffd9c419707c8d8b32fe5b610f80cd0cfa05f372d
+    command:
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --entrypoints.web.address=:80
+      - --ping=true
+      - --log.level=INFO
+    volumes:
+      - ./infra/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    ports:
+      - "127.0.0.1:${TRAEFIK_PORT:-80}:80"
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Same build as workspace. The source mount for hot reload is in docker-compose.override.yml.
+  api:
+    build:
+      context: .
+      target: workspace
+    command: ["pnpm", "--filter", "@sonora/api", "run", "dev"]
+    environment:
+      DATABASE_URL: mysql://root@mysql:3306/sonora
+      PORT: "3000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 90s
+
+  # Debian 13 with ffmpeg 7.1 and libopus. No published ports.
+  media-worker:
+    build:
+      context: ./infra/media-worker
+    command: ["sleep", "infinity"]
+    healthcheck:
+      test: ["CMD", "ffmpeg", "-version"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

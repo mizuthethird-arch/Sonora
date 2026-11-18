@@ -1,0 +1,25 @@
+{
+  "name": "sonora",
+  "private": true,
+  "packageManager": "pnpm@12.21.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "lint": "pnpm -r --if-present run lint",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "pnpm -r --if-present run test",
+    "test:unit": "pnpm -r --if-present run test:unit",
+    "test:integration": "pnpm -r --if-present run test:integration",
+    "build": "pnpm -r --if-present run build",
+    "commitlint": "pnpm --filter @sonora/config exec commitlint --config commitlint.config.js",
+    "check:boundaries": "depcruise . --config packages/config/boundaries.cjs --output-type err-long",
+    "audit:dependencies": "pnpm audit --audit-level=high",
+    "ci": "pnpm run audit:dependencies && pnpm run lint && pnpm run check:boundaries && pnpm run typecheck && pnpm run test && pnpm run build"
+  },
+  "devDependencies": {
+    "dependency-cruiser": "18.7.2",
+    "eslint": "10.15.0",
+    "typescript": "6.0.3"
+  }
+}

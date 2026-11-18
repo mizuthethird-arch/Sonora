@@ -1,0 +1,13 @@
+node_modules
+dist
+coverage
+.env*
+!.env.example
+.npmrc
+*.pem
+*.key
+.DS_Store
+**/generated
+seed-report.json
+reports
+.secrets-local/

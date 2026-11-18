@@ -1,0 +1,2 @@
+#!/bin/sh
+exec docker compose run --rm --no-deps -T workspace pnpm run --silent commitlint < "$1"

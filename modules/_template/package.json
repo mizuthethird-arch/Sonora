@@ -1,0 +1,19 @@
+{
+  "name": "@sonora/module-template",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run"
+  },
+  "prettier": "@sonora/config/prettier",
+  "devDependencies": {
+    "@sonora/config": "workspace:*",
+    "vitest": "5.1.0"
+  },
+  "dependencies": {
+    "@sonora/kernel": "workspace:*"
+  }
+}

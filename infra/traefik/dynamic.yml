@@ -1,0 +1,27 @@
+http:
+  routers:
+    api:
+      entryPoints: [web]
+      rule: "Host(`api.sonora.localhost`)"
+      service: api
+    mailpit:
+      entryPoints: [web]
+      rule: "Host(`mail.sonora.localhost`)"
+      service: mailpit
+    s3:
+      entryPoints: [web]
+      rule: "Host(`s3.sonora.localhost`)"
+      service: s3
+  services:
+    api:
+      loadBalancer:
+        servers:
+          - url: "http://api:3000"
+    mailpit:
+      loadBalancer:
+        servers:
+          - url: "http://mailpit:8025"
+    s3:
+      loadBalancer:
+        servers:
+          - url: "http://s3:9090"
