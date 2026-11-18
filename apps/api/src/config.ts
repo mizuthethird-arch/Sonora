@@ -19,12 +19,14 @@ const environmentSchema = z.object({
   PORT: portSchema.default(DEFAULT_PORT),
   WEB_ORIGIN: z.url().optional(),
   TRUST_PROXY_HOPS: z.string().regex(/^[0-5]$/).transform(Number).optional(),
+  REDIS_URL: z.url().optional(),
 });
 
 export type Config = {
   port: number;
   webOrigin?: string;
   trustProxyHops?: number;
+  redisUrl?: string;
 };
 
 export function loadConfig(environment: Record<string, string | undefined>): Config {
@@ -34,5 +36,5 @@ export function loadConfig(environment: Record<string, string | undefined>): Con
     throw new Error(INVALID_PORT_MESSAGE);
   }
 
-  return { port: result.data.PORT, webOrigin: result.data.WEB_ORIGIN, trustProxyHops: result.data.TRUST_PROXY_HOPS };
+  return { port: result.data.PORT, webOrigin: result.data.WEB_ORIGIN, trustProxyHops: result.data.TRUST_PROXY_HOPS, redisUrl: result.data.REDIS_URL };
 }
