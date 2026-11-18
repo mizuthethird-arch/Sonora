@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { kernelRouteGroup } from "./kernel.js";
-import { allRouteGroups, type RouteGroup } from "./route-group.js";
+import { allRouteGroups } from "./index.js";
+import { type RouteGroup } from "./route-group.js";
 
 describe("kernel route group", () => {
   const routes = kernelRouteGroup.routes;
