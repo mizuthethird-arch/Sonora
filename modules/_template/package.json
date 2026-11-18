@@ -12,5 +12,8 @@
   "devDependencies": {
     "@sonora/config": "workspace:*",
     "vitest": "5.1.0"
+  },
+  "dependencies": {
+    "@sonora/kernel": "workspace:*"
   }
 }
