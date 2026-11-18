@@ -9,3 +9,5 @@ export {
   type RequestContext,
   type UserRef,
 } from "./request-context.js";
+export { runInTransaction, type TransactionalDatabase } from "./transaction.js";
+export { runGracefulShutdown, SHUTDOWN_TIMEOUT_MS, type Drain, type ShutdownOutcome } from "./shutdown.js";
