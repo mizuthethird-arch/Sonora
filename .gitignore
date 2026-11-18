@@ -10,3 +10,4 @@ coverage
 **/generated
 seed-report.json
 reports
+.secrets-local/
