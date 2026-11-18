@@ -2,12 +2,15 @@ import cors from "cors";
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import { type ModuleDefinition, mountRouteRegistry } from "@sonora/kernel";
+import { allRouteGroups, buildMergedDocument, CONTRACT_VERSION } from "@sonora/contracts";
 
 export type AppOptions = {
   readonly modules?: readonly ModuleDefinition[];
   // The one origin allowed to call the API from a browser. Without it, no origin is allowed.
   readonly webOrigin?: string;
   readonly rateLimits?: RateLimits;
+  // The NODE_ENV of the process. The OpenAPI document is not served when it is "production".
+  readonly nodeEnv?: string;
 };
 
 export type RateLimit = { readonly max: number; readonly windowMs: number };
@@ -37,6 +40,13 @@ export function createApp(options: AppOptions = {}): Express {
   });
 
   mountRouteRegistry(app, options.modules ?? []);
+
+  if (options.nodeEnv !== "production") {
+    const document = buildMergedDocument(allRouteGroups, CONTRACT_VERSION);
+    app.get("/api/v1/openapi.json", (_request, response) => {
+      response.json(document);
+    });
+  }
 
   return app;
 }
