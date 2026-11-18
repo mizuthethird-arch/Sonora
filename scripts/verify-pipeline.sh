@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 
 failures=0
 workflow=".github/workflows/ci.yml"
+dependabot=".github/dependabot.yml"
 
 node_image_pattern='^FROM node:[0-9]+\.[0-9]+\.[0-9]+-alpine@sha256:[0-9a-f]{64} AS workspace$'
 gitleaks_image_pattern='image: zricethezav/gitleaks:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}'
@@ -351,12 +352,12 @@ publish_runs_on_push_to_main() {
 }
 
 every_job_times_out_at_twenty_minutes() {
-  [ "$(grep -Ec '^ +timeout-minutes: 20 *$' "$workflow")" -eq 6 ]
+  [ "$(grep -Ec '^ +timeout-minutes: 20 *$' "$workflow")" -eq 7 ]
 }
 
-workflow_has_six_jobs() {
+workflow_has_seven_jobs() {
   local id
-  for id in checks integration migration image publish ci; do
+  for id in checks integration migration image publish ci automerge; do
     file_matches "$workflow" "^  $id:" || return 1
   done
 }
@@ -574,6 +575,87 @@ api_image_has_no_npm() {
   docker run --rm --entrypoint node sonora-api:verify --version >/dev/null 2>&1
 }
 
+dependabot_ecosystem_text() {
+  awk -v ecosystem="$1" '
+    $0 == "  - package-ecosystem: " ecosystem { found = 1; print; next }
+    found && /^  - / { exit }
+    found { print }
+  ' "$dependabot"
+}
+
+dependabot_groups_cover_stack() {
+  local npm_text docker_text group
+  npm_text=$(dependabot_ecosystem_text npm)
+  docker_text=$(dependabot_ecosystem_text docker)
+  for group in react vite testing lint; do
+    text_contains_all "$npm_text" "      $group:" || return 1
+  done
+  text_contains_all "$docker_text" '      docker-base-images:'
+}
+
+dependabot_every_interval_is_weekly() {
+  local intervals
+  intervals=$(grep -E '^[[:space:]]*interval:' "$dependabot") || return 1
+  ! grep -Evq '^[[:space:]]*interval: weekly[[:space:]]*$' <<<"$intervals"
+}
+
+dependabot_updates_weekly_and_cover_ecosystems() {
+  dependabot_every_interval_is_weekly || return 1
+  file_has_lines "$dependabot" \
+    '  - package-ecosystem: npm' \
+    '  - package-ecosystem: docker' \
+    '  - package-ecosystem: github-actions' \
+    '  - package-ecosystem: docker-compose'
+}
+
+dependabot_skips_modules_directory() {
+  ! file_matches "$dependabot" '(directory|directories):[[:space:]]*"?\.?/?modules|^[[:space:]]+- +"?\.?/?modules'
+}
+
+dependabot_major_updates_are_not_grouped() {
+  local npm_text docker_text
+  npm_text=$(dependabot_ecosystem_text npm)
+  docker_text=$(dependabot_ecosystem_text docker)
+  text_contains_all "$npm_text" 'update-types:' || return 1
+  text_contains_all "$docker_text" 'update-types:' || return 1
+  ! grep -Fq major <<<"$npm_text" && ! grep -Fq major <<<"$docker_text"
+}
+
+ci_has_automerge_job() {
+  local text if_lines
+  text=$(job_text automerge)
+  [ -n "$text" ] || return 1
+  if_lines=$(grep -E "$if_line_pattern" <<<"$text") || return 1
+  text_contains_all "$if_lines" \
+    "github.actor == 'dependabot[bot]'" \
+    "github.event_name == 'pull_request'" \
+    "update-type == 'version-update:semver-patch'" \
+    "dependency-type == 'direct:development'" || return 1
+  text_contains_all "$text" 'gh pr merge' || return 1
+  grep -Eq 'uses: dependabot/fetch-metadata@[0-9a-f]{40}' <<<"$text" || return 1
+  job_needs automerge ci
+}
+
+ci_gate_does_not_need_automerge() {
+  ! job_needs ci automerge
+}
+
+automerge_checks_every_updated_dependency() {
+  text_contains_all "$(job_text automerge)" \
+    'updated-dependencies-json' 'jq' 'dependencyType' 'updateType'
+}
+
+automerge_merge_pins_head_commit() {
+  text_contains_all "$(job_text automerge)" '--match-head-commit'
+}
+
+automerge_requires_pr_author() {
+  local text if_lines
+  text=$(job_text automerge)
+  if_lines=$(grep -E "$if_line_pattern" <<<"$text") || return 1
+  text_contains_all "$if_lines" "github.event.pull_request.user.login == 'dependabot[bot]'"
+}
+
 check "compose file is valid" docker compose config --quiet
 check "compose defines workspace and gitleaks services" compose_has_workspace_and_gitleaks
 check "workspace image is pinned by version and digest" file_matches Dockerfile "$node_image_pattern"
@@ -612,6 +694,10 @@ check "dependabot covers npm, docker, docker-compose and github-actions" file_ha
   '  - package-ecosystem: docker' \
   '  - package-ecosystem: docker-compose' \
   '  - package-ecosystem: github-actions'
+check "dependabot groups react, vite, testing and lint for npm and docker-base-images for docker" dependabot_groups_cover_stack
+check "dependabot updates weekly and covers npm, docker, github-actions and docker-compose" dependabot_updates_weekly_and_cover_ecosystems
+check "dependabot skips the modules directory" dependabot_skips_modules_directory
+check "dependabot npm and docker groups use update-types and never group major updates" dependabot_major_updates_are_not_grouped
 check "hook setup script exists and is executable" hook_setup_script_is_ready
 check "git hooks are activated (run scripts/setup-hooks.sh)" hooks_are_activated
 check "secret scan finds no leaks" docker compose -f docker-compose.yml run --rm gitleaks
@@ -637,8 +723,15 @@ check "the module database check does not put the password on the command line" 
 check "the api dev script calls a small commented script" api_dev_runs_commented_script
 check "the Makefile marks the seed credentials as dummies" makefile_marks_seed_credentials_as_dummies
 check "the README explains password changes and the checksum stop" readme_explains_password_change_and_checksum_stop
-check "ci has the six jobs" workflow_has_six_jobs
+check "ci has the seven jobs" workflow_has_seven_jobs
 check "the ci gate job needs every other job and fails on failure or cancellation" ci_gate_job_is_ready
+check "the ci gate job does not need the automerge job, which needs the gate" ci_gate_does_not_need_automerge
+check "ci has an automerge job for Dependabot patch dev-dependency updates, after ci" ci_has_automerge_job
+check "automerge checks every updated dependency in the Dependabot metadata, not only the PR-level output" automerge_checks_every_updated_dependency
+check "automerge merge pins the head commit with --match-head-commit" automerge_merge_pins_head_commit
+check "automerge job-level if requires the Dependabot PR author" automerge_requires_pr_author
+check "contents write is granted only to the automerge job" grant_only_in_job 'contents: write' automerge
+check "pull-requests write is granted only to the automerge job" grant_only_in_job 'pull-requests: write' automerge
 check "packages write is granted only to the publish job" packages_write_only_in_publish
 check "security-events write is granted only to the image job" grant_only_in_job 'security-events: write' image
 check "publish runs only on a push to main" publish_runs_on_push_to_main

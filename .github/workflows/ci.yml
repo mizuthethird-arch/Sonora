@@ -191,3 +191,35 @@ jobs:
             echo "::error::a needed job failed or was cancelled"
             exit 1
           fi
+
+  automerge:
+    needs: ci
+    if: success() && needs.ci.result == 'success' && github.actor == 'dependabot[bot]' && github.event.pull_request.user.login == 'dependabot[bot]' && github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Fetch the Dependabot update metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check every updated dependency is a patch update of a direct dev dependency
+        id: check
+        env:
+          UPDATED: ${{ steps.metadata.outputs.updated-dependencies-json }}
+        run: |
+          if printf '%s' "$UPDATED" | jq -e 'length > 0 and all(.[]; .dependencyType == "direct:development" and .updateType == "version-update:semver-patch")' >/dev/null; then
+            echo "eligible=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Merge a patch update of a direct dev dependency
+        if: steps.check.outputs.eligible == 'true' && steps.metadata.outputs.update-type == 'version-update:semver-patch' && steps.metadata.outputs.dependency-type == 'direct:development'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr merge --squash --match-head-commit "$HEAD_SHA" "$PR_URL"

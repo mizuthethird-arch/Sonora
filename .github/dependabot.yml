@@ -1,15 +1,64 @@
 version: 2
 updates:
+  # modules/_template follows the root versions because only "/" is listed.
   - package-ecosystem: npm
     directory: /
     target-branch: dev
     schedule:
       interval: weekly
+    groups:
+      react:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react*"
+        update-types:
+          - "minor"
+          - "patch"
+      vite:
+        patterns:
+          - vite
+          - "@vitejs/*"
+          - "vite-plugin-*"
+        update-types:
+          - "minor"
+          - "patch"
+      testing:
+        patterns:
+          - vitest
+          - "@vitest/*"
+          - "@testing-library/*"
+          - supertest
+          - msw
+          - playwright
+          - "@playwright/*"
+        update-types:
+          - "minor"
+          - "patch"
+      lint:
+        patterns:
+          - eslint
+          - "eslint-*"
+          - "@eslint/*"
+          - prettier
+          - typescript-eslint
+          - "@commitlint/*"
+          - dependency-cruiser
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: docker
     directory: /
     target-branch: dev
     schedule:
       interval: weekly
+    groups:
+      docker-base-images:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
   - package-ecosystem: github-actions
     directory: /
     target-branch: dev
