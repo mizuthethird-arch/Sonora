@@ -12,9 +12,10 @@ COPY --chown=node:node modules/_template/package.json modules/_template/
 COPY --chown=node:node infra/seed/package.json infra/seed/
 RUN pnpm install --frozen-lockfile
 COPY --chown=node:node . .
+# Packages resolve to their built output at runtime; typecheck reads their source (customConditions).
+RUN pnpm --filter @sonora/kernel --filter @sonora/contracts run build
 
 FROM workspace AS build
-RUN pnpm --filter @sonora/kernel --filter @sonora/contracts run build
 RUN DATABASE_URL=mysql://build@localhost:3306/build pnpm --filter @sonora/api run build
 RUN pnpm --filter @sonora/api deploy --prod /tmp/api-deploy
 
