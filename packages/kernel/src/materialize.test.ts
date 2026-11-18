@@ -34,6 +34,7 @@ describe("materializeSecrets", () => {
 
     const written = await materializeSecrets({
       store,
+      environment: "staging",
       names: ["sonora/staging/db/identity", "sonora/staging/db/catalog"],
       directory: target,
     });
@@ -47,7 +48,7 @@ describe("materializeSecrets", () => {
     const store = memoryStore({ "sonora/staging/db/identity": "identity-value" });
     const target = join(root, "run");
 
-    await materializeSecrets({ store, names: ["sonora/staging/db/identity"], directory: target });
+    await materializeSecrets({ store, environment: "staging", names: ["sonora/staging/db/identity"], directory: target });
 
     expect(statSync(join(target, "identity")).mode & 0o777).toBe(0o400);
   });
@@ -57,7 +58,7 @@ describe("materializeSecrets", () => {
     const target = join(root, "run");
 
     await expect(
-      materializeSecrets({ store, names: ["sonora/staging/db/identity"], directory: target }),
+      materializeSecrets({ store, environment: "staging", names: ["sonora/staging/db/identity"], directory: target }),
     ).rejects.toThrow(/sonora\/staging\/db\/identity/);
   });
 });
