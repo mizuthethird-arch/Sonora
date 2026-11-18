@@ -612,6 +612,15 @@ dependabot_skips_modules_directory() {
   ! file_matches "$dependabot" '(directory|directories):[[:space:]]*"?\.?/?modules|^[[:space:]]+- +"?\.?/?modules'
 }
 
+dependabot_major_updates_are_not_grouped() {
+  local npm_text docker_text
+  npm_text=$(dependabot_ecosystem_text npm)
+  docker_text=$(dependabot_ecosystem_text docker)
+  text_contains_all "$npm_text" 'update-types:' || return 1
+  text_contains_all "$docker_text" 'update-types:' || return 1
+  ! grep -Fq major <<<"$npm_text" && ! grep -Fq major <<<"$docker_text"
+}
+
 ci_has_automerge_job() {
   local text if_lines
   text=$(job_text automerge)
@@ -629,6 +638,22 @@ ci_has_automerge_job() {
 
 ci_gate_does_not_need_automerge() {
   ! job_needs ci automerge
+}
+
+automerge_checks_every_updated_dependency() {
+  text_contains_all "$(job_text automerge)" \
+    'updated-dependencies-json' 'jq' 'dependencyType' 'updateType'
+}
+
+automerge_merge_pins_head_commit() {
+  text_contains_all "$(job_text automerge)" '--match-head-commit'
+}
+
+automerge_requires_pr_author() {
+  local text if_lines
+  text=$(job_text automerge)
+  if_lines=$(grep -E "$if_line_pattern" <<<"$text") || return 1
+  text_contains_all "$if_lines" "github.event.pull_request.user.login == 'dependabot[bot]'"
 }
 
 check "compose file is valid" docker compose config --quiet
@@ -672,6 +697,7 @@ check "dependabot covers npm, docker, docker-compose and github-actions" file_ha
 check "dependabot groups react, vite, testing and lint for npm and docker-base-images for docker" dependabot_groups_cover_stack
 check "dependabot updates weekly and covers npm, docker, github-actions and docker-compose" dependabot_updates_weekly_and_cover_ecosystems
 check "dependabot skips the modules directory" dependabot_skips_modules_directory
+check "dependabot npm and docker groups use update-types and never group major updates" dependabot_major_updates_are_not_grouped
 check "hook setup script exists and is executable" hook_setup_script_is_ready
 check "git hooks are activated (run scripts/setup-hooks.sh)" hooks_are_activated
 check "secret scan finds no leaks" docker compose -f docker-compose.yml run --rm gitleaks
@@ -701,6 +727,9 @@ check "ci has the seven jobs" workflow_has_seven_jobs
 check "the ci gate job needs every other job and fails on failure or cancellation" ci_gate_job_is_ready
 check "the ci gate job does not need the automerge job, which needs the gate" ci_gate_does_not_need_automerge
 check "ci has an automerge job for Dependabot patch dev-dependency updates, after ci" ci_has_automerge_job
+check "automerge checks every updated dependency in the Dependabot metadata, not only the PR-level output" automerge_checks_every_updated_dependency
+check "automerge merge pins the head commit with --match-head-commit" automerge_merge_pins_head_commit
+check "automerge job-level if requires the Dependabot PR author" automerge_requires_pr_author
 check "contents write is granted only to the automerge job" grant_only_in_job 'contents: write' automerge
 check "pull-requests write is granted only to the automerge job" grant_only_in_job 'pull-requests: write' automerge
 check "packages write is granted only to the publish job" packages_write_only_in_publish
