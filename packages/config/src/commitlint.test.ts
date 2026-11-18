@@ -50,4 +50,21 @@ describe("the shared commitlint config", () => {
   it("rejects an empty message", () => {
     expect(lintCommitMessage("").status).not.toBe(0);
   });
+
+  it("accepts a Dependabot title with a capital Bump", () => {
+    expect(lintCommitMessage("chore(deps): Bump redis from 7-alpine to 8-alpine").status).toBe(0);
+  });
+
+  it("accepts a Dependabot dev dependency title with a capital Bump", () => {
+    expect(
+      lintCommitMessage("chore(deps-dev): Bump @types/node from 24.19.2 to 26.6.6").status,
+    ).toBe(0);
+  });
+
+  it("still rejects other sentence-case subjects", () => {
+    const result = lintCommitMessage("fix(api): Return 404 for unknown track");
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("subject-case");
+  });
 });
