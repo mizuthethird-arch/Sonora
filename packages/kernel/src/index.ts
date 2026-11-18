@@ -35,3 +35,4 @@ export {
 export { materializeSecrets, type MaterializeInput } from "./materialize.js";
 export { buildRouteTable, mountRouteRegistry, type RouteEntry } from "./route-registry.js";
 export { type HttpMethod, type RouteSpec } from "./module.js";
+export { composeSections, type ComposedPage, type SectionLoaders, type SectionResult } from "./compose.js";
