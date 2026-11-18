@@ -36,6 +36,8 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: ./scripts/contracts-check.sh "origin/$BASE_REF"
+      - name: Reject tracked env files other than .env.example
+        run: ./scripts/check-env-files.sh
       - name: Audit dependencies
         run: docker compose -f docker-compose.yml run --rm --no-deps workspace pnpm run audit:dependencies
       - name: Lint
