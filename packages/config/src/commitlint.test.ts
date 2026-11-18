@@ -67,4 +67,23 @@ describe("the shared commitlint config", () => {
     expect(result.status).not.toBe(0);
     expect(result.output).toContain("subject-case");
   });
+
+  it("rejects a Dependabot-style header followed by a body that breaks a rule", () => {
+    const message = `chore(deps): Bump redis from 7 to 8\n\n${"x".repeat(150)}`;
+    const result = lintCommitMessage(message);
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("body-max-line-length");
+  });
+
+  it("accepts a Dependabot title that ends with a newline", () => {
+    expect(lintCommitMessage("chore(deps): Bump redis from 7-alpine to 8-alpine\n").status).toBe(0);
+  });
+
+  it("rejects a sentence-case subject with a capital Bump outside the deps scope", () => {
+    const result = lintCommitMessage("chore(ci): Bump actions");
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("subject-case");
+  });
 });
