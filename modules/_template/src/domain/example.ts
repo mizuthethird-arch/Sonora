@@ -5,7 +5,15 @@ export type Example = {
   readonly title: string;
 };
 
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
+const DELETE_CHARACTER_CODE = 127;
+const LAST_CONTROL_CHARACTER_CODE = 31;
+
+function hasControlCharacter(text: string): boolean {
+  return [...text].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= LAST_CONTROL_CHARACTER_CODE || code === DELETE_CHARACTER_CODE;
+  });
+}
 
 // Checks and trims a title. Throws when it is empty, too long or contains control characters.
 export function parseExampleTitle(input: string): string {
@@ -16,7 +24,7 @@ export function parseExampleTitle(input: string): string {
   if (title.length > MAX_TITLE_LENGTH) {
     throw new Error(`title must be at most ${MAX_TITLE_LENGTH} characters`);
   }
-  if (CONTROL_CHARACTERS.test(title)) {
+  if (hasControlCharacter(title)) {
     throw new Error("title must not contain control characters");
   }
   return title;
