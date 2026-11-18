@@ -1,0 +1,21 @@
+name: production
+
+# Deploys the image of a version tag (vX.Y.Z on main) to the production VPS.
+# The GitHub "production" environment holds the owner approval rule; it is set in repository settings.
+# Turned on by the repository variable PRODUCTION_DEPLOY_ENABLED.
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: vars.PRODUCTION_DEPLOY_ENABLED == 'true'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: production
+      tag: sha-${{ substring(github.sha, 0, 7) }}
+    secrets: inherit

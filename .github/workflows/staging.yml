@@ -1,0 +1,22 @@
+name: staging
+
+# Deploys the image of every successful ci run on main to the staging VPS.
+# Turned on by the repository variable STAGING_DEPLOY_ENABLED.
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.event.workflow_run.conclusion == 'success' && vars.STAGING_DEPLOY_ENABLED == 'true'
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: staging
+      tag: sha-${{ substring(github.event.workflow_run.head_sha, 0, 7) }}
+    secrets: inherit
