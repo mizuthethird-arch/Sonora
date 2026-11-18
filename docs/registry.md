@@ -30,12 +30,18 @@ In this order, for every request:
 
 `GET /api/v1/openapi.json` serves the merged contract document, except when `NODE_ENV` is `production`.
 
+## Configuration
+
+- `WEB_ORIGIN`: the one origin allowed to call the API from a browser.
+- `TRUST_PROXY_HOPS` (0 to 5): how many reverse proxies sit in front of the API. Behind Traefik, set it to 1, so per-IP limits see the client and not the proxy.
+- `REDIS_URL`: where the per-IP rate-limit counters are kept. Without it, they stay in memory for this process. Each limiter (general and auth) has its own Redis prefix.
+- `NODE_ENV`: `production` turns off the OpenAPI document.
+
 ## Not built yet
 
 - **Session check.** The permission on a route is not enforced yet. Sessions come from identity (T039 to T041).
-- **Per-session rate limits and the Redis store.** Only per-IP limits exist. Redis is in compose, but no client is wired into the API.
+- **Per-session rate limits.** Only per-IP limits exist.
 - **Composition endpoints.** `composeSections` in `packages/kernel` loads page sections in parallel, with a timeout per section. Home and page endpoints wait for module facades (T048 onwards).
-- **Trust proxy.** Behind Traefik, the client IP comes from `X-Forwarded-For`. Trust proxy is not set, so per-IP limits see the proxy address until it is configured.
 
 ## Later: a remote route (P16)
 
