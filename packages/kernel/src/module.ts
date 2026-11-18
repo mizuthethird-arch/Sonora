@@ -1,4 +1,4 @@
-import type { Router } from "express";
+import type { Router, RequestHandler } from "express";
 import { type FacadeMethod } from "./request-context.js";
 import { isPlainId } from "./request-id.js";
 
@@ -14,10 +14,22 @@ export type JobDefinition = {
   readonly run: () => Promise<void>;
 };
 
+export type HttpMethod = "get" | "post" | "put" | "patch" | "delete";
+
+// A route a module serves. The path is relative to the module's route prefix. The permission is "public" or a
+// permission name such as catalog:track:read, enforced once sessions reach the registry.
+export type RouteSpec = {
+  readonly method: HttpMethod;
+  readonly path: string;
+  readonly permission: string;
+  readonly handler: RequestHandler;
+};
+
 export type ModuleDefinition = {
   readonly name: string;
   readonly routePrefix: string;
   readonly routes: (router: Router) => void;
+  readonly httpRoutes?: readonly RouteSpec[];
   readonly consumers: readonly ConsumerDefinition[];
   readonly jobs: readonly JobDefinition[];
   readonly facade: Readonly<Record<string, FacadeMethod<never, unknown>>>;

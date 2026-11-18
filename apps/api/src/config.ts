@@ -17,10 +17,12 @@ const portSchema = z
 
 const environmentSchema = z.object({
   PORT: portSchema.default(DEFAULT_PORT),
+  WEB_ORIGIN: z.url().optional(),
 });
 
 export type Config = {
   port: number;
+  webOrigin?: string;
 };
 
 export function loadConfig(environment: Record<string, string | undefined>): Config {
@@ -30,5 +32,5 @@ export function loadConfig(environment: Record<string, string | undefined>): Con
     throw new Error(INVALID_PORT_MESSAGE);
   }
 
-  return { port: result.data.PORT };
+  return { port: result.data.PORT, webOrigin: result.data.WEB_ORIGIN };
 }
