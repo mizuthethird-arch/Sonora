@@ -16,6 +16,8 @@ fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+# The container runs as another user, so the mounted files must be readable by it.
+chmod 755 "$work"
 
 if ! git cat-file -e "$base_ref:$CONTRACT_DIR/openapi.json" 2>/dev/null; then
   echo "no contract on $base_ref yet; nothing to compare"
@@ -26,6 +28,7 @@ git show "$base_ref:$CONTRACT_DIR/openapi.json" > "$work/base-openapi.json"
 git show "$base_ref:$CONTRACT_DIR/contract.json" > "$work/base-contract.json"
 cp "$CONTRACT_DIR/openapi.json" "$work/current-openapi.json"
 cp "$CONTRACT_DIR/contract.json" "$work/current-contract.json"
+chmod 644 "$work"/*.json
 
 # The committed document must be exactly what the code generates.
 docker compose -f docker-compose.yml run --rm --no-deps -T workspace sh -c \
