@@ -1,12 +1,12 @@
 import { once } from "node:events";
 import type { Server } from "node:http";
 import { promisify } from "node:util";
-import { createApp } from "./app.js";
+import { type AppOptions, createApp } from "./app.js";
 
 const shutdownSignals = ["SIGTERM", "SIGINT"] as const;
 
-export async function startServer(port: number): Promise<Server> {
-  const server = createApp().listen(port);
+export async function startServer(port: number, options: AppOptions = {}): Promise<Server> {
+  const server = createApp(options).listen(port);
   await once(server, "listening");
   return server;
 }
