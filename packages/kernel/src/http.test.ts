@@ -62,9 +62,14 @@ describe("problem+json errors", () => {
   });
 
   it("answers an unexpected error with a generic 500 and no stack", async () => {
-    const app = makeApp();
-    app.get("/boom", () => {
-      throw new Error("secret internal detail");
+    const app = createApp({
+      role: "api",
+      readinessChecks: healthyChecks,
+      mountRoutes: (routes) => {
+        routes.get("/boom", () => {
+          throw new Error("secret internal detail");
+        });
+      },
     });
 
     const response = await request(app).get("/boom");
