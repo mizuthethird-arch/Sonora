@@ -21,3 +21,4 @@ export {
 } from "./module.js";
 export { parseRole, roleProfile, ROLES, type Role, type RoleProfile } from "./role.js";
 export { bootRole, type BootDeps } from "./boot.js";
+export { bootConfig, ConfigError, loadConfig, type ConfigDeps } from "./config.js";
