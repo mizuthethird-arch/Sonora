@@ -23,7 +23,7 @@ describe("buildGroupDocument", () => {
 
 describe("buildMergedDocument", () => {
   it("contains the paths of every route group", () => {
-    const document = buildMergedDocument(allRouteGroups);
+    const document = buildMergedDocument(allRouteGroups, "1.0.0");
     const expected = allRouteGroups.flatMap((group) => group.routes.map((route) => route.path));
 
     expect(Object.keys(document.paths ?? {}).sort()).toEqual([...new Set(expected)].sort());

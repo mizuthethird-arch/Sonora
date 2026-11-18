@@ -1,4 +1,3 @@
-import { type OpenApiDocument } from "../openapi/openapi.js";
 import { type ContractSnapshot, decideCompatibility, findBreakingChanges } from "../compat/compatibility.js";
 
 export type ContractMeta = {
@@ -8,7 +7,7 @@ export type ContractMeta = {
 };
 
 export type ContractInput = {
-  readonly document: OpenApiDocument;
+  readonly document: { readonly paths?: Readonly<Record<string, unknown>> };
   readonly contract: ContractMeta;
 };
 

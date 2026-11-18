@@ -6,6 +6,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "openapi:emit": "node dist/cli/emit.js",
+    "contracts:check": "node dist/cli/check.js",
     "test": "vitest run",
     "test:unit": "vitest run",
     "typecheck": "tsc --noEmit"

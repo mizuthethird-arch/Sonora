@@ -16,7 +16,7 @@ const narrow = group(z.object({ id: z.string() }).strict());
 
 describe("checkContracts", () => {
   it("passes when the contract is unchanged", () => {
-    const document = buildMergedDocument([wide]);
+    const document = buildMergedDocument([wide], "1.0.0");
 
     const result = checkContracts({
       base: { document, contract: { version: "1.0.0", overlapUntil: null } },
@@ -28,8 +28,8 @@ describe("checkContracts", () => {
 
   it("fails when a field is removed and the version is not bumped", () => {
     const result = checkContracts({
-      base: { document: buildMergedDocument([wide]), contract: { version: "1.0.0", overlapUntil: null } },
-      current: { document: buildMergedDocument([narrow]), contract: { version: "1.0.0", overlapUntil: null } },
+      base: { document: buildMergedDocument([wide], "1.0.0"), contract: { version: "1.0.0", overlapUntil: null } },
+      current: { document: buildMergedDocument([narrow], "1.0.0"), contract: { version: "1.0.0", overlapUntil: null } },
     });
 
     expect(result.allowed).toBe(false);
@@ -38,8 +38,8 @@ describe("checkContracts", () => {
 
   it("passes a removed field when the version is bumped and an overlap period is noted", () => {
     const result = checkContracts({
-      base: { document: buildMergedDocument([wide]), contract: { version: "1.0.0", overlapUntil: null } },
-      current: { document: buildMergedDocument([narrow]), contract: { version: "2.0.0", overlapUntil: "2027-03-01" } },
+      base: { document: buildMergedDocument([wide], "1.0.0"), contract: { version: "1.0.0", overlapUntil: null } },
+      current: { document: buildMergedDocument([narrow], "1.0.0"), contract: { version: "2.0.0", overlapUntil: "2027-03-01" } },
     });
 
     expect(result.allowed).toBe(true);
