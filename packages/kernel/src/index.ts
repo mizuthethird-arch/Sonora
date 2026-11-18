@@ -21,3 +21,15 @@ export {
 } from "./module.js";
 export { parseRole, roleProfile, ROLES, type Role, type RoleProfile } from "./role.js";
 export { bootRole, type BootDeps } from "./boot.js";
+export { bootConfig, ConfigError, loadConfig, type ConfigDeps } from "./config.js";
+export {
+  createLocalSecretStore,
+  ENVIRONMENT_NAMES,
+  MODULE_NAMES,
+  moduleSecretName,
+  SecretNotFoundError,
+  type EnvironmentName,
+  type ModuleName,
+  type SecretStore,
+} from "./secrets.js";
+export { materializeSecrets, type MaterializeInput } from "./materialize.js";

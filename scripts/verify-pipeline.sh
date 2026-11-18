@@ -14,6 +14,38 @@ cancel_only_on_pull_requests="cancel-in-progress: \${{ github.event_name == 'pul
 action_pinned_to_sha='uses: .*@[0-9a-f]{40}'
 action_pinned_to_name='uses: .+@(v[0-9]|main|master|latest)'
 
+env_guard_rejects_tracked_env_files() {
+  local repo guard scratch result
+  repo=$(pwd)
+  guard="$repo/scripts/check-env-files.sh"
+  scratch=$(mktemp -d) || return 1
+  (
+    cd "$scratch" || exit 1
+    git init -q . && git config user.email guard@example.test && git config user.name guard
+    printf 'MODULE_DB_PASSWORD=\n' > .env && git add .env && git commit -q -m "chore: planted"
+  ) || { rm -rf "$scratch"; return 1; }
+  [ -x "$guard" ] && ! "$guard" "$scratch" >/dev/null 2>&1
+  result=$?
+  rm -rf "$scratch"
+  return "$result"
+}
+
+env_guard_accepts_env_example() {
+  local repo guard scratch result
+  repo=$(pwd)
+  guard="$repo/scripts/check-env-files.sh"
+  scratch=$(mktemp -d) || return 1
+  (
+    cd "$scratch" || exit 1
+    git init -q . && git config user.email guard@example.test && git config user.name guard
+    printf 'MODULE_DB_PASSWORD=\n' > .env.example && git add .env.example && git commit -q -m "chore: example"
+  ) || { rm -rf "$scratch"; return 1; }
+  [ -x "$guard" ] && "$guard" "$scratch" >/dev/null 2>&1
+  result=$?
+  rm -rf "$scratch"
+  return "$result"
+}
+
 check() {
   local description="$1"
   shift
@@ -615,6 +647,8 @@ check "trivy limits severities when it writes SARIF" trivy_limits_sarif_severiti
 check "the SARIF upload skips Dependabot runs and a missing report" upload_sarif_skips_dependabot_and_missing_report
 check "the migration dry run uses only the base compose file" migration_dry_run_uses_base_compose_file
 check "the workflow never continues on error" file_lacks "$workflow" continue-on-error
+check "a tracked .env file other than .env.example is rejected" env_guard_rejects_tracked_env_files
+check "the .env.example file is accepted" env_guard_accepts_env_example
 check "pull requests check the API contract against the base branch" file_contains "$workflow" "scripts/contracts-check.sh"
 check "every package that has a test script also has a test script that CI runs" packages_with_tests_run_in_ci
 check "the api stage removes npm from the production image" api_stage_removes_npm
