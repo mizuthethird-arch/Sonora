@@ -245,6 +245,9 @@ importers:
       '@sonora/config':
         specifier: workspace:*
         version: link:../../packages/config
+      vitest:
+        specifier: 5.1.0
+        version: 5.1.0(@types/node@24.19.2)(vite@8.3.8(@types/node@24.19.2)(jiti@2.7.0))
 
   packages/config:
     dependencies:
