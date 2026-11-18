@@ -193,6 +193,33 @@ media_worker_runs_and_installs_ffmpeg() {
   file_contains infra/media-worker/Dockerfile 'apt-get install' ffmpeg
 }
 
+# Prints the meilisearch service block of docker-compose.yml (from its key up to the next service or top-level key).
+meilisearch_service_block() {
+  awk '$0 == "  meilisearch:" { found = 1; next } found && (/^[^ ]/ || /^  [^ ]/) { exit } found { print }' docker-compose.yml
+}
+
+meilisearch_image_is_pinned() {
+  meilisearch_service_block | grep -Fqx -- '    image: getmeili/meilisearch:v1.56.0@sha256:1f578fa865f8251894b3bf38d6668d6209a3f451f8f65ab953e129d4c1db5ef4'
+}
+
+meilisearch_has_healthcheck() {
+  meilisearch_service_block | grep -Fq 'healthcheck:'
+}
+
+meilisearch_publishes_no_port() {
+  local block
+  block=$(meilisearch_service_block)
+  [ -n "$block" ] || return 1
+  ! grep -Eq '^[[:space:]]+ports:' <<<"$block"
+}
+
+meilisearch_master_key_comes_from_env_in_production_mode() {
+  local block
+  block=$(meilisearch_service_block)
+  grep -Fq 'MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-}' <<<"$block" || return 1
+  grep -Eq 'MEILI_ENV: "?production"?' <<<"$block"
+}
+
 makefile_has_development_targets() {
   local target
   for target in up down down-v seed migrate test logs doctor check-databases env-check; do
@@ -212,6 +239,12 @@ env_file_rejected_naming_key() {
   grep -Fq MODULE_DB_PASSWORD <<<"$output"
 }
 
+env_file_rejected_naming_meili_key() {
+  local output
+  output=$(./scripts/check-env.sh "$1" 2>&1) && return 1
+  grep -Fq MEILI_MASTER_KEY <<<"$output"
+}
+
 env_file_accepted_without_echoing_value() {
   local output
   output=$(./scripts/check-env.sh "$1" 2>&1) || return 1
@@ -219,18 +252,21 @@ env_file_accepted_without_echoing_value() {
 }
 
 check_env_rejects_bad_files() {
-  local empty filled missing verdict=0
+  local empty filled meili_empty missing verdict=0
   empty=$(mktemp)
   filled=$(mktemp)
+  meili_empty=$(mktemp)
   missing="$filled.missing"
   printf 'MODULE_DB_PASSWORD=\n' >"$empty"
-  printf 'MODULE_DB_PASSWORD=dev-only\n' >"$filled"
+  printf 'MODULE_DB_PASSWORD=dev-only\nMEILI_MASTER_KEY=dev-meili-master-key-0123\n' >"$filled"
+  printf 'MODULE_DB_PASSWORD=dev-only\nMEILI_MASTER_KEY=\n' >"$meili_empty"
 
   env_file_is_rejected "$missing" || verdict=1
   env_file_rejected_naming_key "$empty" || verdict=1
+  env_file_rejected_naming_meili_key "$meili_empty" || verdict=1
   env_file_accepted_without_echoing_value "$filled" || verdict=1
 
-  rm -f "$empty" "$filled"
+  rm -f "$empty" "$filled" "$meili_empty"
   return "$verdict"
 }
 
@@ -296,6 +332,27 @@ readme_line_has_both() {
 readme_explains_password_change_and_checksum_stop() {
   readme_line_has_both MODULE_DB_PASSWORD 'make down-v' || return 1
   readme_line_has_both checksum stops
+}
+
+makefile_up_starts_meilisearch() {
+  line_after Makefile up: | grep -Eq 'docker compose up .*[[:space:]]meilisearch([[:space:]]|$)'
+}
+
+doctor_lists_meilisearch() {
+  file_matches scripts/doctor.sh '^SERVICES=\(.*meilisearch.*\)'
+}
+
+readme_services_table_lists_meilisearch() {
+  grep -Eq '^\| meilisearch \|' README.md
+}
+
+readme_up_and_doctor_rows_name_meilisearch() {
+  readme_line_has_both '`make up`' meilisearch || return 1
+  readme_line_has_both '`make doctor`' meilisearch
+}
+
+readme_env_table_requires_meili_master_key() {
+  grep -Eq '^\| `MEILI_MASTER_KEY` \| Yes \|.*16 characters' README.md
 }
 
 job_text() {
@@ -758,6 +815,17 @@ check "unit tests run without a database" timeout 600 docker compose run --rm --
 check "the migration dry run applies the migrations and a second run is a no-op" migration_dry_run_passes
 check "the Dockerfile has a production api stage" dockerfile_has_production_api_stage
 check "the production api image starts and answers /health" api_image_answers_health
+check "compose defines the meilisearch service" compose_has_default_service meilisearch
+check "meilisearch image is pinned by version and digest" meilisearch_image_is_pinned
+check "meilisearch has a healthcheck" meilisearch_has_healthcheck
+check "meilisearch publishes no host port" meilisearch_publishes_no_port
+check "meilisearch reads its master key from the environment and runs in production mode, which refuses an empty key" meilisearch_master_key_comes_from_env_in_production_mode
+check ".env.example lists MEILI_MASTER_KEY empty" file_has_lines .env.example 'MEILI_MASTER_KEY='
+check "doctor checks meilisearch" doctor_lists_meilisearch
+check "make up starts meilisearch" makefile_up_starts_meilisearch
+check "README services table lists meilisearch" readme_services_table_lists_meilisearch
+check "README make up and make doctor rows name meilisearch" readme_up_and_doctor_rows_name_meilisearch
+check "README env table marks MEILI_MASTER_KEY required, at least 16 characters" readme_env_table_requires_meili_master_key
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"
