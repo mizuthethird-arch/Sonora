@@ -19,3 +19,4 @@ export {
   type ModuleDefinition,
   type ModuleRegistry,
 } from "./module.js";
+export { parseRole, roleProfile, ROLES, type Role, type RoleProfile } from "./role.js";
