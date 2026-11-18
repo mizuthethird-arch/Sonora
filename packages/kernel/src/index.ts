@@ -32,3 +32,4 @@ export {
   type ModuleName,
   type SecretStore,
 } from "./secrets.js";
+export { materializeSecrets, type MaterializeInput } from "./materialize.js";
