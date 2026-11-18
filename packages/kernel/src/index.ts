@@ -11,3 +11,11 @@ export {
 } from "./request-context.js";
 export { runInTransaction, type TransactionalDatabase } from "./transaction.js";
 export { runGracefulShutdown, SHUTDOWN_TIMEOUT_MS, type Drain, type ShutdownOutcome } from "./shutdown.js";
+export {
+  defineModule,
+  loadModules,
+  type ConsumerDefinition,
+  type JobDefinition,
+  type ModuleDefinition,
+  type ModuleRegistry,
+} from "./module.js";
