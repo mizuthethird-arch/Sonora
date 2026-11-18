@@ -11,6 +11,8 @@ export type AppOptions = {
   readonly rateLimits?: RateLimits;
   // The NODE_ENV of the process. The OpenAPI document is not served when it is "production".
   readonly nodeEnv?: string;
+  // How many reverse proxies sit in front of the API (Traefik is one). Zero trusts no forwarded address.
+  readonly trustProxyHops?: number;
 };
 
 export type RateLimit = { readonly max: number; readonly windowMs: number };
@@ -29,6 +31,9 @@ const FORGED_HEADERS = ["x-user-id", "x-profile-id"] as const;
 export function createApp(options: AppOptions = {}): Express {
   const app = express();
   app.disable("x-powered-by");
+  if (options.trustProxyHops !== undefined && options.trustProxyHops > 0) {
+    app.set("trust proxy", options.trustProxyHops);
+  }
   app.use(stripForgedHeaders);
   app.use(cors({ origin: options.webOrigin !== undefined ? [options.webOrigin] : false }));
   const limits = options.rateLimits ?? DEFAULT_RATE_LIMITS;

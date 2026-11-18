@@ -5,6 +5,7 @@ const config = loadConfig(process.env);
 const server = await startServer(config.port, {
   webOrigin: config.webOrigin,
   nodeEnv: process.env["NODE_ENV"],
+  trustProxyHops: config.trustProxyHops,
 });
 
 await shutdownOnSignals(server);
