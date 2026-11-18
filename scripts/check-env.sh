@@ -4,7 +4,8 @@
 set -euo pipefail
 
 readonly DEFAULT_ENV_FILE=".env"
-readonly REQUIRED_KEYS=(MODULE_DB_PASSWORD)
+readonly REQUIRED_KEYS=(MODULE_DB_PASSWORD MEILI_MASTER_KEY)
+readonly MEILI_MASTER_KEY_MIN_LENGTH=16
 
 problems=0
 
@@ -30,6 +31,16 @@ check_required_keys() {
   done
 }
 
+# Rejects a non-empty MEILI_MASTER_KEY shorter than the minimum. Never prints the value.
+check_meili_key_length() {
+  local file="$1" value
+  value=$(read_value "$file" MEILI_MASTER_KEY)
+  if [[ -n "$value" && "${#value}" -lt "$MEILI_MASTER_KEY_MIN_LENGTH" ]]; then
+    echo "check-env: MEILI_MASTER_KEY in $file must be at least $MEILI_MASTER_KEY_MIN_LENGTH characters" >&2
+    problems=$((problems + 1))
+  fi
+}
+
 main() {
   local file="${1:-$DEFAULT_ENV_FILE}"
   if [[ ! -f "$file" ]]; then
@@ -37,6 +48,7 @@ main() {
     return 1
   fi
   check_required_keys "$file"
+  check_meili_key_length "$file"
   if [[ "$problems" -gt 0 ]]; then
     return 1
   fi
