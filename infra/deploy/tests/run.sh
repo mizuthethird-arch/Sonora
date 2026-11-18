@@ -20,6 +20,10 @@ write_fakes() {
 # Fake docker. Records every call with the SONORA_TAG and IMAGE_REPO it ran with.
 # FAKE_MIGRATE_FAIL=all fails every migrate run; any other value fails only that module.
 printf 'SONORA_TAG=%s IMAGE_REPO=%s docker %s\n' "${SONORA_TAG:-}" "${IMAGE_REPO:-}" "$*" >>"$FAKE_CALLS"
+# With FAKE_LOCK_DIR set, records whether that lock directory exists at each docker call.
+if [ -n "${FAKE_LOCK_DIR:-}" ]; then
+  if [ -d "$FAKE_LOCK_DIR" ]; then echo yes >>"$FAKE_STATE/lock_seen"; else echo no >>"$FAKE_STATE/lock_seen"; fi
+fi
 if [ -n "${SONORA_TAG:-}" ]; then
   printf '%s\n' "$SONORA_TAG" >"$FAKE_STATE/last_tag"
 fi
@@ -70,6 +74,7 @@ setup_sandbox() {
   export SMOKE_URLS="http://127.0.0.1:9/a http://127.0.0.1:9/b"
   export DEPLOY_SCRIPT="$W/fake-deploy.sh"
   unset MODULES SONORA_TAG SSH_ORIGINAL_COMMAND FAKE_MIGRATE_FAIL FAKE_CURL_FAIL FAKE_CURL_FAIL_AFTER_TAG
+  unset FAKE_LOCK_DIR
   RC=0
 }
 
@@ -101,6 +106,20 @@ expect_err() { expect "stderr mentions: $1" grep -Fq -- "$1" "$W/err"; }
 expect_named() { expect "output names: $1" grep -Fq -- "$1" "$W/out" "$W/err"; }
 
 log_file() { printf '%s/%s/releases.log' "$SONORA_ROOT" "$1"; }
+
+lock_dir() { printf '%s/%s/.deploy.lock' "$SONORA_ROOT" "$1"; }
+
+# lock_held_during_deploy: every docker call of the case ran while the lock directory existed.
+lock_held_during_deploy() { [ -s "$W/lock_seen" ] && ! grep -q no "$W/lock_seen"; }
+
+# curl_calls_are_hardened: every curl call passes --max-redirs 0 and takes its url after --url.
+curl_calls_are_hardened() {
+  local total
+  total=$(calls_count '^curl ')
+  [ "$total" -ge 1 ] || return 1
+  [ "$(grep -E '^curl ' "$FAKE_CALLS" | grep -c -- '--max-redirs 0')" -eq "$total" ] || return 1
+  [ "$(grep -E '^curl ' "$FAKE_CALLS" | grep -Ec -- '--url https?://[^ ]+( |$)')" -eq "$total" ]
+}
 
 seed_log() {
   local env="$1" tag
@@ -251,12 +270,13 @@ case_rejects_bad_tag_and_env() {
 }
 
 case_forced_command_accepts_allowed_forms() {
-  local cmd
+  local cmd key_env
   for cmd in 'deploy up staging sha-abcdef1' 'deploy up production v1.2.3' \
     'deploy rollback staging' 'deploy rollback production'; do
+    key_env=$(printf '%s\n' "$cmd" | cut -d' ' -f3)
     rm -f "$W/deploy-args"
     export SSH_ORIGINAL_COMMAND="$cmd"
-    run_script forced-command.sh || return 1
+    run_script forced-command.sh "$key_env" || return 1
     expect "'$cmd' runs the deploy script (exit $RC)" [ "$RC" -eq 0 ] || return 1
     expect "'$cmd' passes its arguments without the word deploy" \
       [ "$(cat "$W/deploy-args" 2>/dev/null)" = "${cmd#deploy }" ] || return 1
@@ -290,11 +310,153 @@ case_forced_command_rejects_hostile_commands() {
   for cmd in "${hostile[@]}"; do
     rm -f "$W/deploy-args"
     export SSH_ORIGINAL_COMMAND="$cmd"
-    run_script forced-command.sh || return 1
+    run_script forced-command.sh staging || return 1
     expect "rejects [$cmd] with exit 126 (got $RC)" [ "$RC" -eq 126 ] || return 1
     expect "rejects [$cmd] with 'rejected' on stderr" grep -qi rejected "$W/err" || return 1
     expect "rejects [$cmd] and runs nothing" [ ! -e "$W/deploy-args" ] || return 1
   done
+}
+
+case_forced_command_staging_key_rejects_production() {
+  local cmd
+  for cmd in 'deploy up production sha-abcdef1' 'deploy rollback production'; do
+    rm -f "$W/deploy-args"
+    export SSH_ORIGINAL_COMMAND="$cmd"
+    run_script forced-command.sh staging || return 1
+    expect "staging key rejects [$cmd] with exit 126 (got $RC)" [ "$RC" -eq 126 ] || return 1
+    expect "staging key rejects [$cmd] with 'rejected' on stderr" grep -qi rejected "$W/err" || return 1
+    expect "staging key rejects [$cmd] and runs nothing" [ ! -e "$W/deploy-args" ] || return 1
+  done
+}
+
+case_forced_command_production_key_rejects_staging() {
+  local cmd
+  for cmd in 'deploy up staging sha-abcdef1' 'deploy rollback staging'; do
+    rm -f "$W/deploy-args"
+    export SSH_ORIGINAL_COMMAND="$cmd"
+    run_script forced-command.sh production || return 1
+    expect "production key rejects [$cmd] with exit 126 (got $RC)" [ "$RC" -eq 126 ] || return 1
+    expect "production key rejects [$cmd] with 'rejected' on stderr" grep -qi rejected "$W/err" || return 1
+    expect "production key rejects [$cmd] and runs nothing" [ ! -e "$W/deploy-args" ] || return 1
+  done
+}
+
+case_forced_command_needs_valid_env_argument() {
+  local arg
+  export SSH_ORIGINAL_COMMAND='deploy rollback staging'
+  rm -f "$W/deploy-args"
+  run_script forced-command.sh || return 1
+  expect "no argument exits 126 (got $RC)" [ "$RC" -eq 126 ] || return 1
+  expect "no argument prints 'rejected' on stderr" grep -qi rejected "$W/err" || return 1
+  expect "no argument runs nothing" [ ! -e "$W/deploy-args" ] || return 1
+  for arg in '' qa Staging 'staging production' 'staging;id'; do
+    rm -f "$W/deploy-args"
+    run_script forced-command.sh "$arg" || return 1
+    expect "argument [$arg] exits 126 (got $RC)" [ "$RC" -eq 126 ] || return 1
+    expect "argument [$arg] prints 'rejected' on stderr" grep -qi rejected "$W/err" || return 1
+    expect "argument [$arg] runs nothing" [ ! -e "$W/deploy-args" ] || return 1
+  done
+}
+
+case_forced_command_production_key_accepts_production() {
+  local cmd
+  for cmd in 'deploy up production v1.2.3' 'deploy rollback production'; do
+    rm -f "$W/deploy-args"
+    export SSH_ORIGINAL_COMMAND="$cmd"
+    run_script forced-command.sh production || return 1
+    expect "production key runs [$cmd] (exit $RC)" [ "$RC" -eq 0 ] || return 1
+    expect "production key passes [$cmd] without the word deploy" \
+      [ "$(cat "$W/deploy-args" 2>/dev/null)" = "${cmd#deploy }" ] || return 1
+  done
+}
+
+case_lock_held_by_live_pid_blocks_deploy() {
+  local pid
+  seed_log staging sha-1111111
+  sleep 30 &
+  pid=$!
+  mkdir "$(lock_dir staging)" && printf '%s\n' "$pid" >"$(lock_dir staging)/pid"
+  run_script deploy.sh up staging sha-abcdef1
+  kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  expect_rc 1 &&
+    expect_err 'another deploy is running' &&
+    expect "no docker call while the lock is held" [ ! -s "$FAKE_CALLS" ] &&
+    expect "the live owner's lock is left in place" [ -f "$(lock_dir staging)/pid" ] &&
+    expect "releases.log is unchanged" last_log_entry_is staging sha-1111111
+}
+
+case_lock_with_dead_pid_is_taken_over() {
+  local pid
+  seed_log staging sha-1111111
+  sleep 0 &
+  pid=$!
+  wait "$pid"
+  mkdir "$(lock_dir staging)" && printf '%s\n' "$pid" >"$(lock_dir staging)/pid"
+  export FAKE_LOCK_DIR="$(lock_dir staging)"
+  run_script deploy.sh up staging sha-abcdef1 && expect_rc 0 &&
+    expect "the deploy ran and took the stale lock" [ "$(calls_count "$MIGRATE")" -ge 1 ] &&
+    expect "the lock was held during the docker calls" lock_held_during_deploy &&
+    expect "the stale lock is gone afterwards" [ ! -e "$(lock_dir staging)" ]
+}
+
+case_lock_released_after_success() {
+  seed_log staging sha-1111111
+  export FAKE_LOCK_DIR="$(lock_dir staging)"
+  run_script deploy.sh up staging sha-abcdef1 && expect_rc 0 &&
+    expect "the lock was held during the docker calls" lock_held_during_deploy &&
+    expect "the lock is removed on success" [ ! -e "$(lock_dir staging)" ]
+}
+
+case_lock_released_after_failure() {
+  seed_log staging sha-1111111
+  export FAKE_LOCK_DIR="$(lock_dir staging)" FAKE_MIGRATE_FAIL=all
+  run_script deploy.sh up staging sha-abcdef1 && expect_rc 1 &&
+    expect "the lock was held during the docker calls" lock_held_during_deploy &&
+    expect "the lock is removed on failure" [ ! -e "$(lock_dir staging)" ]
+}
+
+case_up_rejects_invalid_previous_tag() {
+  seed_log staging sha-1111111 'bad;tag' && snapshot_log staging &&
+    run_script deploy.sh up staging sha-abcdef1 && expect_rc 1 &&
+    expect_err 'releases.log' &&
+    expect "no docker call for a bad previous tag" [ ! -s "$FAKE_CALLS" ] &&
+    expect "releases.log is unchanged" log_unchanged staging
+}
+
+case_rollback_rejects_invalid_tags() {
+  seed_log staging sha-aaaaaaa 'bad;tag' sha-ccccccc && snapshot_log staging &&
+    run_script deploy.sh rollback staging && expect_rc 1 &&
+    expect_err 'releases.log' &&
+    expect "bad second-to-last tag: no docker call" [ ! -s "$FAKE_CALLS" ] &&
+    expect "bad second-to-last tag: releases.log unchanged" log_unchanged staging || return 1
+  seed_log staging sha-aaaaaaa sha-bbbbbbb 'bad;tag' && snapshot_log staging &&
+    run_script deploy.sh rollback staging && expect_rc 1 &&
+    expect_err 'releases.log' &&
+    expect "bad last tag: no docker call" [ ! -s "$FAKE_CALLS" ] &&
+    expect "bad last tag: releases.log unchanged" log_unchanged staging
+}
+
+case_gate_shares_one_deadline() {
+  local start elapsed
+  seed_log staging sha-1111111
+  export FAKE_CURL_FAIL=1 GATE_INTERVAL=1 GATE_TIMEOUT=3
+  export HEALTH_URLS="http://127.0.0.1:9/a http://127.0.0.1:9/b http://127.0.0.1:9/c"
+  start=$SECONDS
+  run_script deploy.sh up staging sha-2222222
+  elapsed=$((SECONDS - start))
+  expect_rc 1 &&
+    expect "three failing URLs share one deadline: gate took ${elapsed}s, must be under 7s" [ "$elapsed" -lt 7 ] &&
+    expect_err 'gate failed, restored sha-1111111'
+}
+
+case_curl_argv_is_hardened() {
+  seed_log staging sha-1111111 &&
+    run_script smoke.sh http://127.0.0.1:9/c && expect_rc 0 &&
+    run_script deploy.sh up staging sha-abcdef1 && expect_rc 0 &&
+    expect "every curl call has --max-redirs 0 and a url after --url" curl_calls_are_hardened &&
+    expect "smoke passes its url after --url" grep -Fq -- '--url http://127.0.0.1:9/c' "$FAKE_CALLS" &&
+    expect "the health gate passes its url after --url" grep -Fq -- '--url http://127.0.0.1:9/health/ready' "$FAKE_CALLS"
 }
 
 run_case() {
@@ -327,6 +489,18 @@ run_case "rollback with one log line fails" case_rollback_with_one_line_fails
 run_case "deploy rejects bad tag and unknown env" case_rejects_bad_tag_and_env
 run_case "forced command accepts allowed forms" case_forced_command_accepts_allowed_forms
 run_case "forced command rejects hostile commands" case_forced_command_rejects_hostile_commands
+run_case "forced command: staging key rejects production commands" case_forced_command_staging_key_rejects_production
+run_case "forced command: production key rejects staging commands" case_forced_command_production_key_rejects_staging
+run_case "forced command: no or invalid env argument is rejected" case_forced_command_needs_valid_env_argument
+run_case "forced command: production key accepts production forms" case_forced_command_production_key_accepts_production
+run_case "lock: a live pid blocks the deploy" case_lock_held_by_live_pid_blocks_deploy
+run_case "lock: a dead pid is taken over and held during the deploy" case_lock_with_dead_pid_is_taken_over
+run_case "lock: held during the deploy and released after success" case_lock_released_after_success
+run_case "lock: released after failure" case_lock_released_after_failure
+run_case "releases.log: invalid previous tag stops up" case_up_rejects_invalid_previous_tag
+run_case "releases.log: invalid tag stops rollback" case_rollback_rejects_invalid_tags
+run_case "health gate: all URLs share one deadline" case_gate_shares_one_deadline
+run_case "curl calls use --max-redirs 0 and pass the url after --url" case_curl_argv_is_hardened
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures case(s) failed"
