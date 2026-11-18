@@ -615,6 +615,7 @@ check "trivy limits severities when it writes SARIF" trivy_limits_sarif_severiti
 check "the SARIF upload skips Dependabot runs and a missing report" upload_sarif_skips_dependabot_and_missing_report
 check "the migration dry run uses only the base compose file" migration_dry_run_uses_base_compose_file
 check "the workflow never continues on error" file_lacks "$workflow" continue-on-error
+check "pull requests check the API contract against the base branch" file_contains "$workflow" "scripts/contracts-check.sh"
 check "every package that has a test script also has a test script that CI runs" packages_with_tests_run_in_ci
 check "the api stage removes npm from the production image" api_stage_removes_npm
 check "the built api image has no npm" api_image_has_no_npm

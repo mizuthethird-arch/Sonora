@@ -31,6 +31,11 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$PR_TITLE" | docker compose -f docker-compose.yml run --rm --no-deps -T workspace pnpm run --silent commitlint
+      - name: Check the API contract against the base branch
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: ./scripts/contracts-check.sh "origin/$BASE_REF"
       - name: Audit dependencies
         run: docker compose -f docker-compose.yml run --rm --no-deps workspace pnpm run audit:dependencies
       - name: Lint
