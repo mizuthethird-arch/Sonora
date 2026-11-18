@@ -26,7 +26,8 @@ describe("event envelope", () => {
   it.each(["id", "type", "version", "occurred_at", "correlation_id", "payload"])(
     "rejects an event without %s",
     (field) => {
-      const { [field]: _removed, ...withoutField } = validEvent;
+      const withoutField: Record<string, unknown> = { ...validEvent };
+      delete withoutField[field];
 
       expect(sample.safeParse(withoutField).success).toBe(false);
     },
