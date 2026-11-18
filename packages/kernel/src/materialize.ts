@@ -1,4 +1,4 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { type EnvironmentName, type SecretStore } from "./secrets.js";
 
@@ -22,8 +22,12 @@ export async function materializeSecrets(input: MaterializeInput): Promise<strin
   for (const name of input.names) {
     const value = await input.store.get(name);
     const path = join(input.directory, basename(name));
-    await writeFile(path, value, { mode: READ_ONLY_FOR_OWNER });
-    await chmod(path, READ_ONLY_FOR_OWNER);
+    // Write a new file, then rename it over the old one. A read-only file cannot be opened for writing,
+    // but the directory can still replace it, so a rotated secret is written on the next run.
+    const temporary = `${path}.${process.pid}.tmp`;
+    await writeFile(temporary, value, { mode: READ_ONLY_FOR_OWNER });
+    await chmod(temporary, READ_ONLY_FOR_OWNER);
+    await rename(temporary, path);
     written.push(path);
   }
   return written;
