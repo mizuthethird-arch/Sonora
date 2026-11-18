@@ -80,7 +80,7 @@ Keys:
 | Key | Required | Notes |
 | --- | --- | --- |
 | `MODULE_DB_PASSWORD` | Yes | Password for the module database users. `make up` fails if it is empty. |
-| `MEILI_MASTER_KEY` | Yes | Master key for Meilisearch, at least 16 characters. `make up` fails if it is empty or shorter. |
+| `MEILI_MASTER_KEY` | Yes | Master key for Meilisearch, at least 16 characters, only A-Z a-z 0-9 _ - . (no quotes). `make up` fails if it is empty, shorter or uses other characters. |
 | `TRAEFIK_PORT` | No | Host port for Traefik. Default: 80. |
 | `JAMENDO_CLIENT_ID` | No | Needed only to build a real manifest from Jamendo, which is a later step. |
 
