@@ -864,6 +864,110 @@ check "README services table lists meilisearch" readme_services_table_lists_meil
 check "README make up and make doctor rows name meilisearch" readme_up_and_doctor_rows_name_meilisearch
 check "README env table marks MEILI_MASTER_KEY required, at least 16 characters" readme_env_table_requires_meili_master_key
 
+deploy_workflow=".github/workflows/deploy.yml"
+staging_workflow=".github/workflows/staging.yml"
+production_workflow=".github/workflows/production.yml"
+deploy_runbook="docs/deploy-runbook.md"
+deploy_secret_pattern='\$\{\{ *secrets\.[A-Z0-9_]+ *\}\}'
+
+every_action_pinned_to_sha() {
+  [ -f "$1" ] || return 1
+  ! grep -F 'uses:' "$1" | grep -Evq "$action_pinned_to_sha"
+}
+
+deploy_workflow_triggers_on_workflow_call() {
+  [ -f "$deploy_workflow" ] || return 1
+  file_matches "$deploy_workflow" '^on: +workflow_call *$' && return 0
+  file_has_lines "$deploy_workflow" 'on:' && file_matches "$deploy_workflow" '^  workflow_call:'
+}
+
+deploy_workflow_grants_only_read() {
+  [ -f "$deploy_workflow" ] || return 1
+  file_matches "$deploy_workflow" '^permissions:' || return 1
+  file_matches "$deploy_workflow" '^ +contents: read *$' || return 1
+  ! grep -Eq ':[[:space:]]*write' "$deploy_workflow"
+}
+
+deploy_concurrency_group_has_environment() {
+  file_matches "$deploy_workflow" '^concurrency:' &&
+    file_matches "$deploy_workflow" 'group: .*inputs\.environment'
+}
+
+deploy_jobs_time_out_at_twenty_minutes() {
+  local runs timed
+  [ -f "$deploy_workflow" ] || return 1
+  runs=$(grep -Ec '^    runs-on:' "$deploy_workflow") || true
+  timed=$(grep -Ec '^    timeout-minutes: 20 *$' "$deploy_workflow") || true
+  [ "$runs" -ge 1 ] && [ "$runs" -eq "$timed" ]
+}
+
+deploy_job_uses_environment_input() {
+  file_matches "$deploy_workflow" '^ +environment: *\$\{\{ *inputs\.environment *\}\}'
+}
+
+deploy_ssh_key_comes_from_secret_env() {
+  file_matches "$deploy_workflow" "^ +[A-Z_]*KEY[A-Z_]*: +$deploy_secret_pattern"
+}
+
+deploy_known_hosts_comes_from_secret_env() {
+  file_matches "$deploy_workflow" "^ +[A-Z_]*KNOWN_HOSTS[A-Z_]*: +$deploy_secret_pattern"
+}
+
+deploy_secrets_only_as_env_values() {
+  [ -f "$deploy_workflow" ] || return 1
+  ! grep -E '\$\{\{ *secrets\.' "$deploy_workflow" |
+    grep -Ev "^ *[A-Za-z_-]+: +$deploy_secret_pattern\$" | grep -q .
+}
+
+deploy_ssh_is_strict_host_checking() {
+  file_contains "$deploy_workflow" 'ssh ' '-o StrictHostKeyChecking=yes'
+}
+
+staging_triggers_on_successful_ci_for_main() {
+  file_matches "$staging_workflow" '^ +workflow_run:' &&
+    file_matches "$staging_workflow" 'workflows: *\[ *"?ci"? *\]|^ +- *"?ci"? *$' &&
+    file_matches "$staging_workflow" 'types: *\[ *"?completed"? *\]|^ +- *"?completed"? *$' &&
+    file_matches "$staging_workflow" 'branches: *\[ *"?main"? *\]|^ +- *"?main"? *$' &&
+    file_contains "$staging_workflow" "github.event.workflow_run.conclusion == 'success'"
+}
+
+staging_calls_deploy_for_staging() {
+  file_contains "$staging_workflow" './.github/workflows/deploy.yml' &&
+    file_matches "$staging_workflow" '^ +environment: *"?staging"? *$'
+}
+
+production_triggers_on_version_tags() {
+  file_matches "$production_workflow" '^ +push:' &&
+    file_contains "$production_workflow" 'tags:' 'v*.*.*'
+}
+
+production_calls_deploy_for_production() {
+  file_contains "$production_workflow" './.github/workflows/deploy.yml' &&
+    file_matches "$production_workflow" '^ +environment: *"?production"? *$'
+}
+
+check "deploy script tests pass (bash infra/deploy/tests/run.sh)" bash infra/deploy/tests/run.sh
+check "deploy workflow is reusable: on workflow_call" deploy_workflow_triggers_on_workflow_call
+check "deploy workflow permissions grant contents read and nothing written" deploy_workflow_grants_only_read
+check "deploy workflow concurrency group includes the environment input" deploy_concurrency_group_has_environment
+check "deploy workflow jobs time out at twenty minutes" deploy_jobs_time_out_at_twenty_minutes
+check "deploy workflow job uses the environment input, so production gets its approval" deploy_job_uses_environment_input
+check "deploy workflow ssh key comes from a secret through env" deploy_ssh_key_comes_from_secret_env
+check "deploy workflow known_hosts comes from a secret through env" deploy_known_hosts_comes_from_secret_env
+check "deploy workflow never puts a secret inside a run line" deploy_secrets_only_as_env_values
+check "deploy workflow ssh uses StrictHostKeyChecking=yes" deploy_ssh_is_strict_host_checking
+check "deploy workflow pins every action to a 40-hex sha" every_action_pinned_to_sha "$deploy_workflow"
+check "staging workflow triggers on completed ci runs on main with conclusion success" staging_triggers_on_successful_ci_for_main
+check "staging workflow calls deploy.yml with environment staging" staging_calls_deploy_for_staging
+check "staging workflow is guarded by vars.STAGING_DEPLOY_ENABLED" file_contains "$staging_workflow" "vars.STAGING_DEPLOY_ENABLED == 'true'"
+check "production workflow triggers on version tags v*.*.*" production_triggers_on_version_tags
+check "production workflow calls deploy.yml with environment production" production_calls_deploy_for_production
+check "production workflow is guarded by vars.PRODUCTION_DEPLOY_ENABLED" file_contains "$production_workflow" "vars.PRODUCTION_DEPLOY_ENABLED == 'true'"
+check "deploy runbook documents the forced command line with command=" file_contains "$deploy_runbook" 'command='
+check "deploy runbook documents the forced command restrict option" file_matches "$deploy_runbook" 'restrict([ ,`]|$)'
+check "deploy runbook documents the rollback command" file_contains "$deploy_runbook" 'deploy rollback staging' 'deploy rollback production'
+check "deploy runbook has a rollback timing table row with the [not timed] placeholder" file_matches "$deploy_runbook" '^\|.*\[not timed\].*\|$'
+
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"
   exit 1
