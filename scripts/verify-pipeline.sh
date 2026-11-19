@@ -1143,6 +1143,30 @@ runbook_documents_signal_handling() {
     grep -Ei 'sigterm|sigint' "$deploy_runbook" | grep -Ei 'previous' | grep -Eiq 'restor'
 }
 
+# runbook_documents_deploy_log: one line names $SONORA_ROOT/<env>/deploy.log, says compose or docker output goes
+# there, and says a dropped ssh session therefore does not kill docker.
+runbook_documents_deploy_log() {
+  file_contains "$deploy_runbook" '$SONORA_ROOT/<env>/deploy.log' &&
+    grep -F 'deploy.log' "$deploy_runbook" | grep -Ei 'compose|docker' | grep -Eiq 'ssh'
+}
+
+# config_step_text: the lines of the runbook's config file section, from its heading to the next heading.
+config_step_text() {
+  awk '/^### Config file \/etc\/sonora\/deploy\.env/ { found = 1; next } found && (/^## / || /^### /) { exit } found { print }' "$deploy_runbook"
+}
+
+# runbook_config_creates_deploy_env_before_chown: the config step creates /etc/sonora/deploy.env (cat >, tee or
+# install) on an earlier line than its chown and its chmod.
+runbook_config_creates_deploy_env_before_chown() {
+  local text create chown_line chmod_line
+  text=$(config_step_text)
+  create=$(printf '%s\n' "$text" | grep -nE '(cat +>|tee |install ).*/etc/sonora/deploy\.env' | head -n 1 | cut -d: -f1) || true
+  chown_line=$(printf '%s\n' "$text" | grep -nE 'chown .*/etc/sonora/deploy\.env' | head -n 1 | cut -d: -f1) || true
+  chmod_line=$(printf '%s\n' "$text" | grep -nE 'chmod .*/etc/sonora/deploy\.env' | head -n 1 | cut -d: -f1) || true
+  [ -n "$create" ] && [ -n "$chown_line" ] && [ -n "$chmod_line" ] &&
+    [ "$create" -lt "$chown_line" ] && [ "$create" -lt "$chmod_line" ]
+}
+
 check "no deploy workflow uses the substring( expression, which actionlint rejects" workflows_avoid_substring
 check "actionlint passes on every workflow (rhysd/actionlint 1.7.7, pinned by digest)" actionlint_passes_on_workflows
 check "deploy workflows staging and production never use secrets: inherit" workflows_do_not_inherit_secrets
@@ -1167,6 +1191,8 @@ check "deploy runbook documents infra/deploy/deploy-forced and the /etc/sonora/d
 check "deploy runbook installs /etc/sonora/deploy.env root-owned" runbook_installs_deploy_env_root_owned
 check "deploy runbook no longer says the wrapper is planned" runbook_wrapper_is_not_planned
 check "deploy runbook: SIGHUP and SIGPIPE are ignored, SIGTERM and SIGINT restore the previous release" runbook_documents_signal_handling
+check "deploy runbook documents \$SONORA_ROOT/<env>/deploy.log: compose output goes there, so a dropped ssh session does not kill docker" runbook_documents_deploy_log
+check "deploy runbook config step creates /etc/sonora/deploy.env (cat >, tee or install) before its chown and chmod" runbook_config_creates_deploy_env_before_chown
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"

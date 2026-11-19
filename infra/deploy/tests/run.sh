@@ -19,8 +19,16 @@ write_fakes() {
   cat >"$W/bin/docker" <<'EOF'
 #!/usr/bin/env bash
 # Fake docker. Records every call with the SONORA_TAG and IMAGE_REPO it ran with.
+# Like a Go program it first resets PIPE (bash 3.2 cannot reset an ignore it inherited, so a failed
+# write below ends it with 141, the status of a SIGPIPE death). FAKE_DOCKER_OUTPUT=1 makes it write
+# one line to stdout and one to stderr before it records; a closed pipe then ends it.
 # FAKE_MIGRATE_FAIL=all fails every migrate run; any other value fails only that module.
 # FAKE_MIGRATE_SLEEP=N makes every migrate run take N seconds (after it is recorded).
+trap - PIPE
+if [ "${FAKE_DOCKER_OUTPUT:-0}" = 1 ]; then
+  printf 'fake-docker stdout: %s\n' "$*" || exit 141
+  printf 'fake-docker stderr: %s\n' "$*" >&2 || exit 141
+fi
 printf 'SONORA_TAG=%s IMAGE_REPO=%s docker %s\n' "${SONORA_TAG:-}" "${IMAGE_REPO:-}" "$*" >>"$FAKE_CALLS"
 # With FAKE_LOCK_DIR set, records whether that lock directory exists at each docker call.
 if [ -n "${FAKE_LOCK_DIR:-}" ]; then
@@ -74,22 +82,41 @@ printf '%s\n' "$@" >dump-argv.txt
 EOF
   cat >"$W/bin/mv" <<'EOF'
 #!/usr/bin/env bash
-# Fake mv. With FAKE_MV_RACE set to a lock directory, the first mv that moves that directory first
-# rewrites its pid file to FAKE_RACE_PID, as if another deploy had taken the lock in between.
-if [ -n "${FAKE_MV_RACE:-}" ]; then
-  src=""
-  for arg in "$@"; do
-    case "$arg" in
-      -*) ;;
-      *)
-        src=$arg
-        break
-        ;;
-    esac
-  done
-  if [ "$src" = "$FAKE_MV_RACE" ] && [ -d "$src" ]; then
+# Fake mv. The source is the first argument that is not an option. With FAKE_MV_RACE set to a lock
+# directory, the first mv that moves that directory is intercepted, in this order:
+#   FAKE_MV_REPLACE=1: the directory is emptied and re-created, as if another deploy had replaced it.
+#   FAKE_RACE_PID set: its pid file is written with FAKE_RACE_PID, as if another deploy had taken it.
+#   FAKE_MV_COLLIDE=1: a leftover <lock>.stale.<caller pid> holding a file named sentinel is created.
+# With FAKE_MV_PUTBACK_PID set, an mv of a <lock>.stale.* copy while the lock path is absent first
+# re-creates the lock path owned by FAKE_MV_PUTBACK_PID, as another deploy would.
+src=""
+for arg in "$@"; do
+  case "$arg" in
+    -*) ;;
+    *)
+      src=$arg
+      break
+      ;;
+  esac
+done
+if [ -n "${FAKE_MV_RACE:-}" ] && [ "$src" = "$FAKE_MV_RACE" ] && [ -d "$src" ]; then
+  if [ "${FAKE_MV_REPLACE:-0}" = 1 ]; then
+    rm -rf "$src"
+    mkdir "$src"
+  fi
+  if [ -n "${FAKE_RACE_PID:-}" ]; then
     printf '%s\n' "$FAKE_RACE_PID" >"$src/pid"
   fi
+  if [ "${FAKE_MV_COLLIDE:-0}" = 1 ]; then
+    mkdir "$src.stale.$PPID" && printf 'keep\n' >"$src.stale.$PPID/sentinel"
+  fi
+fi
+if [ -n "${FAKE_MV_PUTBACK_PID:-}" ] && [ -n "${FAKE_MV_RACE:-}" ] && [ ! -e "$FAKE_MV_RACE" ]; then
+  case "$src" in
+    *.stale.*)
+      mkdir "$FAKE_MV_RACE" && printf '%s\n' "$FAKE_MV_PUTBACK_PID" >"$FAKE_MV_RACE/pid"
+      ;;
+  esac
 fi
 exec /bin/mv "$@"
 EOF
@@ -110,6 +137,7 @@ setup_sandbox() {
   unset DEPLOY_SCRIPT DEPLOY_CONFIG
   unset MODULES SONORA_TAG SSH_ORIGINAL_COMMAND FAKE_MIGRATE_FAIL FAKE_CURL_FAIL FAKE_CURL_FAIL_AFTER_TAG
   unset FAKE_LOCK_DIR FAKE_CURL_CODE FAKE_MIGRATE_SLEEP FAKE_MV_RACE FAKE_RACE_PID
+  unset FAKE_MV_REPLACE FAKE_MV_COLLIDE FAKE_MV_PUTBACK_PID FAKE_CAT_SWAP FAKE_DOCKER_OUTPUT
   RC=0
 }
 
@@ -143,6 +171,8 @@ expect_named() { expect "output names: $1" grep -Fq -- "$1" "$W/out" "$W/err"; }
 log_file() { printf '%s/%s/releases.log' "$SONORA_ROOT" "$1"; }
 
 lock_dir() { printf '%s/%s/.deploy.lock' "$SONORA_ROOT" "$1"; }
+
+deploy_log() { printf '%s/%s/deploy.log' "$SONORA_ROOT" "$1"; }
 
 # lock_held_during_deploy: every docker call of the case ran while the lock directory existed.
 lock_held_during_deploy() { [ -s "$W/lock_seen" ] && ! grep -q no "$W/lock_seen"; }
@@ -891,6 +921,212 @@ case_deploy_forced_rejects_missing_required_keys() {
     run_deploy_forced production && expect_rejected "HEALTH_URLS_PRODUCTION missing for production" || return 1
 }
 
+# --- lock takeover: the takeover acts on the pid the staleness decision judged stale ---
+
+# make_lock DIR PID: a lock directory whose pid file holds PID.
+make_lock() {
+  mkdir "$1" && printf '%s\n' "$2" >"$1/pid"
+}
+
+# dead_pid: prints the pid of a process that has already exited.
+dead_pid() {
+  local p
+  sleep 0 &
+  p=$!
+  wait "$p"
+  printf '%s\n' "$p"
+}
+
+# write_cat_hook: a fake cat. The first read of FAKE_CAT_SWAP prints the file, then replaces the lock
+# directory around it with a fresh one owned by FAKE_RACE_PID, as if another deploy took the lock
+# between the staleness decision and the takeover. Every other read passes through.
+write_cat_hook() {
+  cat >"$W/bin/cat" <<'EOF'
+#!/usr/bin/env bash
+# Fake cat. See write_cat_hook in run.sh.
+if [ "${1:-}" = "${FAKE_CAT_SWAP:-@none}" ] && [ ! -e "$FAKE_STATE/cat_swapped" ]; then
+  : >"$FAKE_STATE/cat_swapped"
+  /bin/cat "$1"
+  dir=$(dirname "$1")
+  rm -rf "$dir"
+  mkdir "$dir"
+  printf '%s\n' "$FAKE_RACE_PID" >"$dir/pid"
+  exit 0
+fi
+exec /bin/cat "$@"
+EOF
+  chmod +x "$W/bin/cat"
+}
+
+# A lock judged stale (dead pid) is replaced by a live owner just before it is moved aside. The takeover
+# must notice, keep the live owner's lock at the lock path and run no docker call.
+case_takeover_replaced_by_live_owner_is_left_alone() {
+  local dead racer ok=0
+  seed_log staging sha-1111111 || return 1
+  dead=$(dead_pid)
+  sleep 30 &
+  racer=$!
+  if ! make_lock "$(lock_dir staging)" "$dead"; then
+    kill "$racer" 2>/dev/null
+    return 1
+  fi
+  export FAKE_MV_RACE="$(lock_dir staging)" FAKE_MV_REPLACE=1 FAKE_RACE_PID="$racer"
+  run_script deploy.sh up staging sha-abcdef1
+  expect_rc 1 &&
+    expect_err 'another deploy is running' &&
+    expect "no docker call happened" [ ! -s "$FAKE_CALLS" ] &&
+    expect "the live owner's lock is at the lock path and holds only its pid, got: $(ls -A "$(lock_dir staging)" 2>/dev/null | paste -sd ' ' -)" \
+      [ "$(ls -A "$(lock_dir staging)" 2>/dev/null | paste -sd ' ' -)" = pid ] &&
+    expect "the live owner's pid file is intact" [ "$(cat "$(lock_dir staging)/pid" 2>/dev/null)" = "$racer" ] || ok=1
+  kill "$racer" 2>/dev/null
+  wait "$racer" 2>/dev/null
+  return "$ok"
+}
+
+# The takeover moves the stale lock aside, reads a live owner's pid instead of the stale one, and tries to put
+# the copy back. Meanwhile another deploy has created the lock path again, so the put-back must not move the
+# copy into that directory: the lock directory may hold only its own pid entry.
+case_takeover_put_back_never_nests() {
+  local dead racer ok=0
+  seed_log staging sha-1111111 || return 1
+  dead=$(dead_pid)
+  sleep 30 &
+  racer=$!
+  if ! make_lock "$(lock_dir staging)" "$dead"; then
+    kill "$racer" 2>/dev/null
+    return 1
+  fi
+  export FAKE_MV_RACE="$(lock_dir staging)" FAKE_MV_REPLACE=1 FAKE_RACE_PID="$racer" FAKE_MV_PUTBACK_PID="$racer"
+  run_script deploy.sh up staging sha-abcdef1
+  expect_rc 1 &&
+    expect "no docker call happened" [ ! -s "$FAKE_CALLS" ] &&
+    expect "the lock directory holds only its own pid entry, got: $(ls -A "$(lock_dir staging)" 2>/dev/null | paste -sd ' ' -)" \
+      [ "$(ls -A "$(lock_dir staging)" 2>/dev/null | paste -sd ' ' -)" = pid ] || ok=1
+  kill "$racer" 2>/dev/null
+  wait "$racer" 2>/dev/null
+  return "$ok"
+}
+
+# A leftover directory named like the takeover's copy, from an earlier killed run, must not receive the lock.
+# The takeover of this dead lock still succeeds, and the leftover keeps its one sentinel file unchanged.
+case_takeover_copy_name_is_unique() {
+  local dead leftover
+  seed_log staging sha-1111111 || return 1
+  dead=$(dead_pid)
+  make_lock "$(lock_dir staging)" "$dead" || return 1
+  export FAKE_MV_RACE="$(lock_dir staging)" FAKE_MV_COLLIDE=1
+  run_script deploy.sh up staging sha-abcdef1
+  leftover=$(ls -d "$W/root/staging"/.deploy.lock.stale.* 2>/dev/null | head -n 1)
+  expect_rc 0 &&
+    expect "a leftover .deploy.lock.stale.<pid> directory exists for the test to check" [ -n "$leftover" ] &&
+    expect "the leftover holds only its sentinel, got: $(ls -A "$leftover" 2>/dev/null | paste -sd ' ' -)" \
+      [ "$(ls -A "$leftover" 2>/dev/null | paste -sd ' ' -)" = sentinel ] &&
+    expect "the leftover's sentinel is unchanged" [ "$(cat "$leftover/sentinel" 2>/dev/null)" = keep ] &&
+    expect "the deploy ran and released its lock" [ ! -e "$(lock_dir staging)" ]
+}
+
+# The staleness decision reads a dead pid. Before the takeover reads the pid again, another deploy replaces the
+# lock with a live owner. The takeover must act on the pid it judged, notice the change and leave the live lock.
+case_takeover_acts_on_the_pid_it_judged() {
+  local dead racer ok=0
+  seed_log staging sha-1111111 || return 1
+  dead=$(dead_pid)
+  sleep 30 &
+  racer=$!
+  if ! make_lock "$(lock_dir staging)" "$dead"; then
+    kill "$racer" 2>/dev/null
+    return 1
+  fi
+  write_cat_hook
+  export FAKE_CAT_SWAP="$(lock_dir staging)/pid" FAKE_RACE_PID="$racer"
+  run_script deploy.sh up staging sha-abcdef1
+  expect_rc 1 &&
+    expect_err 'another deploy is running' &&
+    expect "no docker call happened" [ ! -s "$FAKE_CALLS" ] &&
+    expect "the live owner's lock is still at the lock path" [ "$(cat "$(lock_dir staging)/pid" 2>/dev/null)" = "$racer" ] || ok=1
+  kill "$racer" 2>/dev/null
+  wait "$racer" 2>/dev/null
+  return "$ok"
+}
+
+# --- docker output: to deploy.log, never to the caller's pipes ---
+
+# run_closed_pipes ARG...: runs deploy.sh with stdout and stderr connected to pipes whose readers have exited, as
+# a dropped ssh session leaves them. Sets RC. The run's output is not kept.
+run_closed_pipes() {
+  RC=0
+  bash -c 'exec > >(exit 0) 2> >(exit 0); sleep 0.3; exec bash "$0" "$@"' "$deploy_dir/deploy.sh" "$@" \
+    </dev/null >/dev/null 2>&1 || RC=$?
+}
+
+# docker_output_expected: the stdout and stderr line of every fake docker call, in call order.
+docker_output_expected() {
+  awk '/ docker / { args = $0; sub(/^.* docker /, "", args); print "fake-docker stdout: " args; print "fake-docker stderr: " args }' "$FAKE_CALLS"
+}
+
+# Every docker call is logged, in order, and its output reaches deploy.log whatever the caller's pipes are.
+case_docker_output_is_logged_in_call_order() {
+  seed_log staging sha-1111111 || return 1
+  export FAKE_DOCKER_OUTPUT=1
+  run_script deploy.sh up staging sha-abcdef1 && expect_rc 0 || return 1
+  docker_output_expected >"$W/docker.expected"
+  grep '^fake-docker ' "$(deploy_log staging)" >"$W/docker.logged" 2>/dev/null
+  expect "13 docker calls give 26 expected lines" [ "$(wc -l <"$W/docker.expected" | tr -d ' ')" -eq 26 ] &&
+    expect "deploy.log holds each call's stdout and stderr line, in call order" cmp -s "$W/docker.expected" "$W/docker.logged"
+}
+
+# With both stdout and stderr on closed pipes, the deploy still migrates, starts the containers and records the
+# release, and the docker output is appended to deploy.log after the lines already there.
+case_docker_output_survives_closed_pipes() {
+  seed_log staging sha-1111111 || return 1
+  printf 'earlier deploy output\n' >"$(deploy_log staging)" || return 1
+  export FAKE_DOCKER_OUTPUT=1
+  run_closed_pipes up staging sha-abcdef1
+  expect_rc 0 &&
+    expect "all 11 migrate calls ran" [ "$(calls_count "$MIGRATE")" -eq 11 ] &&
+    expect "containers were started" [ "$(calls_count "$UP")" -ge 1 ] &&
+    expect "deploy.log keeps its earlier line first" [ "$(head -n 1 "$(deploy_log staging)")" = 'earlier deploy output' ] &&
+    expect "deploy.log gained the 26 docker output lines" [ "$(grep -c '^fake-docker ' "$(deploy_log staging)")" -eq 26 ] &&
+    expect "releases.log gained sha-abcdef1" last_log_entry_is staging sha-abcdef1
+}
+
+# The caller's stdout is empty and its stderr holds only deploy's own progress lines, no docker output.
+case_docker_output_stays_off_caller_pipes() {
+  seed_log staging sha-1111111 || return 1
+  export FAKE_DOCKER_OUTPUT=1
+  run_script deploy.sh up staging sha-abcdef1 && expect_rc 0 &&
+    expect "the caller's stdout is empty" [ ! -s "$W/out" ] &&
+    expect "no docker line on the caller's stderr" [ "$(grep -c 'fake-docker' "$W/err")" -eq 0 ] &&
+    expect "stderr holds only deploy: progress lines" [ "$(grep -vc '^deploy: ' "$W/err")" -eq 0 ] &&
+    expect "stderr names the new release" grep -Fq 'deploy: staging now on sha-abcdef1' "$W/err"
+}
+
+# A failed gate restores the previous tag. Its pull and up -d also log to deploy.log, and the restore works
+# with both pipes closed: 11 migrate, the new pull and up, then the restore's pull and up, 15 docker calls.
+case_restore_output_survives_closed_pipes() {
+  seed_log staging sha-1111111 && snapshot_log staging || return 1
+  export FAKE_DOCKER_OUTPUT=1 FAKE_CURL_FAIL_AFTER_TAG=sha-2222222
+  run_closed_pipes up staging sha-2222222
+  expect_rc 1 &&
+    expect "two up -d runs: the new tag, then the previous tag" [ "$(tags_of "$UP" | paste -sd ' ' -)" = "sha-2222222 sha-1111111" ] &&
+    expect "the restore pulled sha-1111111" [ "$(tags_of "$PULL" | tail -n 1)" = sha-1111111 ] &&
+    expect "migrations ran once, not again on restore" [ "$(calls_count "$MIGRATE")" -eq 11 ] &&
+    expect "deploy.log holds the output of all 15 docker calls" [ "$(grep -c '^fake-docker stdout:' "$(deploy_log staging)")" -eq 15 ] &&
+    expect "releases.log is unchanged" log_unchanged staging
+}
+
+# Rollback runs one pull and one up -d; both log to deploy.log and the rollback works with both pipes closed.
+case_rollback_output_survives_closed_pipes() {
+  seed_log staging sha-aaaaaaa sha-bbbbbbb sha-ccccccc || return 1
+  export FAKE_DOCKER_OUTPUT=1
+  run_closed_pipes rollback staging
+  expect_rc 0 &&
+    expect "rollback runs no migrations" [ "$(calls_count "$MIGRATE")" -eq 0 ] &&
+    expect "up -d runs with sha-bbbbbbb" [ "$(tags_of "$UP" | tail -n 1)" = sha-bbbbbbb ] &&
+    expect "deploy.log holds the output of the pull and the up -d" [ "$(grep -c '^fake-docker stdout:' "$(deploy_log staging)")" -eq 2 ] &&
+    expect "releases.log gained sha-bbbbbbb" last_log_entry_is staging sha-bbbbbbb
+}
+
 run_case() {
   local name="$1" fn="$2" rc=0 output
   output=$(mktemp) || { echo "FAIL $name"; failures=$((failures + 1)); return; }
@@ -952,6 +1188,15 @@ run_case "deploy-forced: missing config file is rejected" case_deploy_forced_rej
 run_case "deploy-forced: unknown keys and malformed lines are rejected" case_deploy_forced_rejects_unknown_keys_and_malformed_lines
 run_case "deploy-forced: bad values are rejected and the config is never sourced" case_deploy_forced_rejects_bad_values_and_never_sources_config
 run_case "deploy-forced: missing required keys are rejected" case_deploy_forced_rejects_missing_required_keys
+run_case "lock takeover: a stale lock replaced by a live owner is left alone" case_takeover_replaced_by_live_owner_is_left_alone
+run_case "lock takeover: the put-back never nests a copy inside the lock directory" case_takeover_put_back_never_nests
+run_case "lock takeover: the moved-aside name is unique, a leftover copy is untouched" case_takeover_copy_name_is_unique
+run_case "lock takeover: acts on the pid the staleness decision judged" case_takeover_acts_on_the_pid_it_judged
+run_case "docker output: every call is logged to deploy.log in call order" case_docker_output_is_logged_in_call_order
+run_case "docker output: survives closed stdout and stderr, appends to deploy.log" case_docker_output_survives_closed_pipes
+run_case "docker output: stays off the caller's stdout and stderr" case_docker_output_stays_off_caller_pipes
+run_case "docker output: a restore after a failed gate survives closed pipes" case_restore_output_survives_closed_pipes
+run_case "docker output: a rollback survives closed pipes" case_rollback_output_survives_closed_pipes
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures case(s) failed"
