@@ -2,6 +2,8 @@ name: staging
 
 # Deploys the image of every successful ci run on main to the staging VPS.
 # Turned on by the repository variable STAGING_DEPLOY_ENABLED.
+# The verify job skips the deploy when main has moved on since the ci run: an older sha is never deployed over a newer one.
+# The GitHub "staging" environment restricts deployment branches to main; it is set in repository settings.
 
 on:
   workflow_run:
@@ -13,10 +15,40 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.conclusion == 'success' && vars.STAGING_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      deploy: ${{ steps.main.outputs.deploy }}
+    steps:
+      - name: Name the image tag from the ci head sha
+        id: tag
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: echo "tag=sha-${HEAD_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Check that the ci commit is still the tip of main
+        id: main
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          main_sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)
+          if [ "$main_sha" != "$HEAD_SHA" ]; then
+            echo "::notice::main is now at $main_sha, so $HEAD_SHA is not deployed"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
+
   deploy:
-    if: github.event.workflow_run.conclusion == 'success' && vars.STAGING_DEPLOY_ENABLED == 'true'
+    needs: verify
+    if: needs.verify.outputs.deploy == 'true'
     uses: ./.github/workflows/deploy.yml
     with:
       environment: staging
-      tag: sha-${{ substring(github.event.workflow_run.head_sha, 0, 7) }}
-    secrets: inherit
+      tag: ${{ needs.verify.outputs.tag }}

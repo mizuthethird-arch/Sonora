@@ -1,7 +1,8 @@
 name: deploy
 
 # Reusable deploy job, called by staging.yml and production.yml. Never runs on its own.
-# The deploy key on the VPS is restricted by a forced command, so it can only run "deploy up".
+# The deploy key is bound per environment on the VPS (command="/srv/sonora/bin/deploy-forced <environment>"),
+# so each key may only run "deploy up" and "deploy rollback" for its own environment.
 
 on:
   workflow_call:
@@ -47,6 +48,14 @@ jobs:
             echo "::error::DEPLOY_HOST and DEPLOY_USER must be set as variables for this environment"
             exit 1
           fi
+          if [[ ! "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+            echo "::error::DEPLOY_USER must be a lowercase unix user name"
+            exit 1
+          fi
+          if [[ ! "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]+$ ]]; then
+            echo "::error::DEPLOY_HOST must be a host name or an IP address"
+            exit 1
+          fi
 
       - name: Write the deploy key and known_hosts to runner temp
         env:
@@ -64,9 +73,15 @@ jobs:
       - name: Run the deploy through the forced command
         run: |
           ssh -i "$RUNNER_TEMP/deploy_key" \
+            -F /dev/null \
             -o IdentitiesOnly=yes \
+            -o IdentityAgent=none \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$RUNNER_TEMP/known_hosts" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 \
+            -o ServerAliveInterval=15 \
+            -o PasswordAuthentication=no \
             -o BatchMode=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" "deploy up $ENVIRONMENT $TAG"
 
