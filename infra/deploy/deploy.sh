@@ -21,6 +21,8 @@ GATE_INTERVAL="${GATE_INTERVAL:-5}"
 GATE_TIMEOUT="${GATE_TIMEOUT:-120}"
 LOCK_PATH=""
 LOCK_HELD=0
+# Set by lock_judge: the state of a stale lock (its pid, or pidless-old).
+JUDGED=""
 HTTP_CODE=000
 # Set by deploy_up and rollback so that on_interrupt knows how far the release got.
 PHASE="idle"
@@ -95,32 +97,72 @@ lock_age() {
   echo $(($(date +%s) - mtime))
 }
 
-# lock_is_live DIR: a lock is live while the pid it records runs. With no usable pid it is live
-# for 5 seconds after its directory was created, because the owner may not have written its pid yet.
-lock_is_live() {
+# lock_judge DIR: decides whether the lock in DIR is stale. Returns 1 when it is live. Returns 0 when it
+# is stale and sets JUDGED to the state it judged: the pid the lock records, or pidless-old. A lock is
+# live while the pid it records runs. With no usable pid it is live for 5 seconds after its directory
+# was created, because the owner may not have written its pid yet.
+lock_judge() {
   local owner
   owner=$(lock_pid "$1")
   case "$owner" in
     '' | *[!0-9]* | 0)
-      [ "$(lock_age "$1")" -lt 5 ]
+      if [ "$(lock_age "$1")" -lt 5 ]; then
+        return 1
+      fi
+      JUDGED=pidless-old
       ;;
     *)
-      kill -0 "$owner" 2>/dev/null
+      if kill -0 "$owner" 2>/dev/null; then
+        return 1
+      fi
+      JUDGED=$owner
       ;;
   esac
+  return 0
 }
 
-# take_over_stale: moves the stale lock aside, checks that the directory moved is the one whose pid
-# was read, then removes it. If another deploy replaced the lock meanwhile, it is put back and this
-# returns 1.
+# lock_is_judged DIR STATE: succeeds when DIR still holds the state a judgment recorded: the pid STATE,
+# or for pidless-old a lock with no usable pid that is at least 5 seconds old.
+lock_is_judged() {
+  local owner
+  owner=$(lock_pid "$1")
+  if [ "$2" = pidless-old ]; then
+    case "$owner" in
+      '' | *[!0-9]* | 0) [ "$(lock_age "$1")" -ge 5 ] ;;
+      *) return 1 ;;
+    esac
+  else
+    [ "$owner" = "$2" ]
+  fi
+}
+
+# restore_aside ASIDE: puts ASIDE back at LOCK_PATH, only when LOCK_PATH does not exist. mkdir creates
+# LOCK_PATH atomically and fails when another deploy holds it, so a directory is never moved into an
+# existing one; only the pid file is moved in. If that move fails, the new directory is removed again.
+# ASIDE is removed only once it is empty.
+restore_aside() {
+  local aside="$1"
+  mkdir "$LOCK_PATH" 2>/dev/null || return 0
+  if [ -e "$aside/pid" ] && ! mv "$aside/pid" "$LOCK_PATH/pid" 2>/dev/null; then
+    rmdir "$LOCK_PATH" 2>/dev/null || true
+    return 0
+  fi
+  rmdir "$aside" 2>/dev/null || true
+}
+
+# take_over_stale JUDGED: moves the lock aside under a unique name, then checks that the directory moved
+# is the state JUDGED recorded. Only then is the stale copy removed. Otherwise another deploy owns the
+# lock now: restore_aside puts it back when LOCK_PATH is free, the live owner's lock is never deleted,
+# and this returns 1.
 take_over_stale() {
-  local stale moved aside
-  stale=$(lock_pid "$LOCK_PATH")
-  aside="$LOCK_PATH.stale.$$"
+  local judged="$1" aside
+  aside="$LOCK_PATH.stale.$$.$RANDOM"
+  if [ -e "$aside" ]; then
+    return 1
+  fi
   mv "$LOCK_PATH" "$aside" 2>/dev/null || return 1
-  moved=$(lock_pid "$aside")
-  if [ "$moved" != "$stale" ]; then
-    mv "$aside" "$LOCK_PATH" 2>/dev/null || true
+  if ! lock_is_judged "$aside" "$judged"; then
+    restore_aside "$aside"
     return 1
   fi
   say "taking over stale lock $LOCK_PATH"
@@ -141,22 +183,38 @@ acquire_lock() {
   local env="$1" attempt=1
   LOCK_PATH="$SONORA_ROOT/$env/.deploy.lock"
   until mkdir "$LOCK_PATH" 2>/dev/null; do
-    if [ "$attempt" -gt 1 ] || lock_is_live "$LOCK_PATH"; then
+    if [ "$attempt" -gt 1 ] || ! lock_judge "$LOCK_PATH"; then
       fail "another deploy is running in $env"
     fi
     attempt=$((attempt + 1))
-    take_over_stale || fail "another deploy is running in $env"
+    take_over_stale "$JUDGED" || fail "another deploy is running in $env"
   done
   LOCK_HELD=1
   trap release_lock EXIT
   printf '%s\n' "$$" >"$LOCK_PATH/pid"
 }
 
-# compose ENV ARGS...: docker compose against the environment's compose file.
+# show_log_tail LOG: the last 20 lines of LOG on stderr, so an operator at a terminal sees why a call failed.
+# A failed read or write here is not an error.
+show_log_tail() {
+  local text
+  text=$(tail -n 20 "$1" 2>/dev/null) || true
+  say "last lines of $1:"
+  err "$text"
+}
+
+# compose ENV ARGS...: docker compose against the environment's compose file. Its stdout and stderr are
+# appended to <env>/deploy.log and never reach the caller's pipes, so a dropped ssh session cannot kill
+# docker through a broken pipe. On failure the last lines of that log are shown on stderr.
 compose() {
-  local env="$1"
+  local env="$1" log rc
   shift
-  docker compose -f "$SONORA_ROOT/$env/docker-compose.yml" "$@"
+  log="$SONORA_ROOT/$env/deploy.log"
+  (umask 027 && : >>"$log") || fail "cannot write $log"
+  docker compose -f "$SONORA_ROOT/$env/docker-compose.yml" "$@" >>"$log" 2>&1 && return 0
+  rc=$?
+  show_log_tail "$log"
+  return "$rc"
 }
 
 # log_tags ENV: prints the tag of each releases.log line, oldest first.

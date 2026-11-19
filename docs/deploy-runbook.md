@@ -69,23 +69,20 @@ Run the install again after every change to these scripts. `[not run]`
 
 ### Config file /etc/sonora/deploy.env
 
-The wrapper reads its settings from `/etc/sonora/deploy.env`, which is root-owned (root:root, mode 0644). Create the directory and the file as root, then set the owner and mode:
+The wrapper reads its settings from `/etc/sonora/deploy.env`, which is root-owned (root:root, mode 0644). Create the directory and the file as root, then set the owner and mode. The heredoc holds the keys; its values use placeholder hosts only and no secrets:
 
 ```bash
 sudo install -d -o root -g root -m 0755 /etc/sonora
-sudo chown root:root /etc/sonora/deploy.env
-sudo chmod 0644 /etc/sonora/deploy.env
-```
-
-The file holds these keys. The values below use placeholder hosts only and no secrets:
-
-```
+sudo tee /etc/sonora/deploy.env >/dev/null <<'EOF'
 SONORA_ROOT=/srv/sonora
 IMAGE_REPO=registry.example.test/sonora
 # MODULES is optional. When unset, deploy.sh uses its default module list.
 # MODULES=identity catalog media playback library search recommender realtime notification analytics platform
 HEALTH_URLS_STAGING=https://staging.example.test/health/ready
 HEALTH_URLS_PRODUCTION=https://www.example.test/health/ready
+EOF
+sudo chown root:root /etc/sonora/deploy.env
+sudo chmod 0644 /etc/sonora/deploy.env
 ```
 
 - `SONORA_ROOT`: the directory that holds `<env>/docker-compose.yml` and `<env>/releases.log`.
@@ -126,8 +123,16 @@ The VPS side of the scripts is `[not run]` until T015.02 to T015.10 are done.
 
 - `deploy.sh` ignores SIGHUP and SIGPIPE, so a dropped ssh session does not kill a deploy in progress. `[not run]`
 - SIGTERM and SIGINT restore the previous release (no migrations, no log entry) and release the lock. `[not run]`
-- The lock is `<env>/.deploy.lock`, a directory holding the owner's pid. A lock whose pid is not a running process is stale and is taken over. A lock with no pid is treated as live while it is younger than 5 seconds, because another deploy may still be between creating it and writing the pid. An older lock with no pid is stale. `[not run]`
+- The lock is `<env>/.deploy.lock`, a directory holding the owner's pid. A lock whose pid is not a running process is stale and is taken over. A lock with no pid is treated as live while it is younger than 5 seconds, because another deploy may still be between creating it and writing the pid. An older lock with no pid is stale. A takeover moves the stale lock aside under a unique `.deploy.lock.stale.<pid>.<random>` name, removes that copy only if it still holds the stale state that was judged, and otherwise puts it back only when the lock path is free and exits 1 without touching a live owner's lock. `[not run]`
+- A first-ever deploy to an environment (no previous release) that is interrupted or fails its health gate has nothing to restore. It stays running and is not logged, so stop it by hand with `docker compose -f /srv/sonora/<env>/docker-compose.yml down`. `[not run]`
 - The health gate accepts only HTTP 200. Redirects and 204 are unhealthy. `[not run]`
+
+## Deploy log
+
+- Every `docker compose` call a deploy makes (migrate runs, pull, up -d, the restore after a failed gate, and rollback) appends its stdout and stderr to `$SONORA_ROOT/<env>/deploy.log`. That output never goes to the ssh session, so a dropped ssh session cannot kill docker through a broken pipe. `[not run]`
+- `deploy.sh` creates the file with umask 027 (mode 0640), so only the deploy user and its group can read it. `[not run]`
+- Nothing in `deploy.sh` rotates or truncates it; set up logrotate for it on the VPS. `[not run]`
+- To read it, use `tail -n 200 /srv/sonora/<env>/deploy.log`. When a call fails, `deploy.sh` also prints the last 20 lines to its own stderr. The deploy's progress lines (`deploy: ...`) are not written to this file; `releases.log` remains the release history. `[not run]`
 
 ## Deploy order
 
