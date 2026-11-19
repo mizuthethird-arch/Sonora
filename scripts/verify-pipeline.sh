@@ -968,6 +968,232 @@ check "deploy runbook documents the forced command restrict option" file_matches
 check "deploy runbook documents the rollback command" file_contains "$deploy_runbook" 'deploy rollback staging' 'deploy rollback production'
 check "deploy runbook has a rollback timing table row with the [not timed] placeholder" file_matches "$deploy_runbook" '^\|.*\[not timed\].*\|$'
 
+actionlint_image='rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9'
+
+all_exist() {
+  local file
+  for file in "$@"; do
+    [ -f "$file" ] || return 1
+  done
+}
+
+# workflow_job_text FILE JOB: the text of JOB in FILE, for any workflow file (job_text reads $workflow only).
+workflow_job_text() {
+  awk -v id="$2" '
+    $0 == "  " id ":" { found = 1; print; next }
+    found && /^  [^ #][^ :]*:/ { exit }
+    found { print }
+  ' "$1"
+}
+
+# workflow_job_needs FILE JOB NEEDED: JOB lists NEEDED under its needs key.
+workflow_job_needs() {
+  local text
+  text=$(workflow_job_text "$1" "$2")
+  grep -Eq "^ +- +$3 *\$|needs:.*[^a-z_-]$3([^a-z_-]|\$)" <<<"$text"
+}
+
+workflows_avoid_substring() {
+  all_exist "$deploy_workflow" "$staging_workflow" "$production_workflow" || return 1
+  ! grep -Fq 'substring(' "$deploy_workflow" "$staging_workflow" "$production_workflow"
+}
+
+actionlint_passes_on_workflows() {
+  docker run --rm -v "$PWD:/repo" -w /repo "$actionlint_image" -no-color .github/workflows/*.yml
+}
+
+workflows_do_not_inherit_secrets() {
+  all_exist "$staging_workflow" "$production_workflow" || return 1
+  ! grep -Eq 'secrets:[[:space:]]*inherit' "$staging_workflow" "$production_workflow"
+}
+
+staging_deploy_is_gated_on_push_from_this_repo() {
+  local if_lines
+  all_exist "$staging_workflow" || return 1
+  if_lines=$(grep -E "$if_line_pattern" "$staging_workflow") || return 1
+  text_contains_all "$if_lines" "github.event.workflow_run.event == 'push'" \
+    'github.event.workflow_run.head_repository.full_name == github.repository'
+}
+
+staging_verify_compares_head_with_main_tip() {
+  local text
+  text=$(workflow_job_text "$staging_workflow" verify)
+  [ -n "$text" ] || return 1
+  text_contains_all "$text" 'github.event.workflow_run.head_sha' main || return 1
+  grep -Eq 'gh api|git (ls-remote|rev-parse|fetch)' <<<"$text"
+}
+
+staging_deploy_needs_verify() {
+  all_exist "$staging_workflow" || return 1
+  workflow_job_needs "$staging_workflow" deploy verify
+}
+
+production_verify_checks_tag_is_on_main() {
+  local text
+  text=$(workflow_job_text "$production_workflow" verify)
+  [ -n "$text" ] || return 1
+  text_contains_all "$text" 'git merge-base --is-ancestor' 'origin/main' || return 1
+  grep -Eq 'github\.sha|GITHUB_SHA' <<<"$text"
+}
+
+production_verify_checkout_is_full_and_pinned() {
+  local text
+  text=$(workflow_job_text "$production_workflow" verify)
+  grep -Eq 'uses: actions/checkout@[0-9a-f]{40}' <<<"$text" || return 1
+  text_contains_all "$text" 'fetch-depth: 0'
+}
+
+production_deploy_needs_verify() {
+  all_exist "$production_workflow" || return 1
+  workflow_job_needs "$production_workflow" deploy verify
+}
+
+# deploy_ssh_call_text: the ssh -i command in deploy.yml, from its first line to the last continued line.
+deploy_ssh_call_text() {
+  awk '/ssh -i / { found = 1 } found { print; if ($0 !~ /\\$/) exit }' "$deploy_workflow"
+}
+
+deploy_ssh_is_hardened() {
+  local text
+  all_exist "$deploy_workflow" || return 1
+  text=$(deploy_ssh_call_text)
+  [ -n "$text" ] || return 1
+  text_contains_all "$text" '-F /dev/null' 'GlobalKnownHostsFile=/dev/null' 'ConnectTimeout=' 'PasswordAuthentication=no'
+}
+
+deploy_user_is_validated_before_ssh() {
+  local validate_line ssh_line
+  all_exist "$deploy_workflow" || return 1
+  validate_line=$(grep -nE '"\$DEPLOY_USER" =~ \^' "$deploy_workflow" | head -n 1 | cut -d: -f1)
+  ssh_line=$(grep -nE '^ +ssh -i ' "$deploy_workflow" | head -n 1 | cut -d: -f1)
+  [ -n "$validate_line" ] && [ -n "$ssh_line" ] && [ "$validate_line" -lt "$ssh_line" ]
+}
+
+runbook_binds_forced_command_per_key() {
+  grep -Eq 'command="[^"]*deploy-forced staging"' "$deploy_runbook" &&
+    grep -Eq 'command="[^"]*deploy-forced production"' "$deploy_runbook"
+}
+
+runbook_forced_command_runs_under_env_i() {
+  file_contains "$deploy_runbook" 'env -i' && grep -Eiq 'root-owned (config|configuration)' "$deploy_runbook"
+}
+
+runbook_sets_permit_user_environment_no() {
+  file_contains "$deploy_runbook" 'PermitUserEnvironment no'
+}
+
+runbook_scripts_are_root_owned_and_not_writable() {
+  grep -Eiq 'root-owned (scripts|deploy scripts)' "$deploy_runbook" &&
+    grep -Eiq 'not writable by the deploy user' "$deploy_runbook"
+}
+
+runbook_rollback_toggles_between_last_two() {
+  grep -Eiq 'toggl[a-z]* between the last two releases' "$deploy_runbook"
+}
+
+runbook_restricts_both_environments_to_refs() {
+  grep -Ei 'deployment (branch|tag)' "$deploy_runbook" | grep -Eiq 'staging' &&
+    grep -Ei 'deployment (branch|tag)' "$deploy_runbook" | grep -Eiq 'production'
+}
+
+shellcheck_image='koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb'
+
+# shellcheck_passes_on_deploy_scripts: the pinned shellcheck image lints every deploy script. Fails when docker is missing.
+shellcheck_passes_on_deploy_scripts() {
+  command -v docker >/dev/null 2>&1 || return 1
+  docker run --rm -v "$PWD:/repo" -w /repo "$shellcheck_image" infra/deploy/*.sh infra/deploy/deploy-forced
+}
+
+# runbook_prerequisite_block: the lines from "hard prerequisite" on, twelve at most.
+runbook_prerequisite_block() {
+  awk 'tolower($0) ~ /hard prerequisite/ { found = 1 } found { print; if (++n >= 12) exit }' "$deploy_runbook"
+}
+
+# runbook_production_prerequisites: the hard prerequisites before PRODUCTION_DEPLOY_ENABLED name the
+# owner-only tag ruleset and the required reviewer with prevent self-review.
+runbook_production_prerequisites() {
+  local block
+  block=$(runbook_prerequisite_block)
+  [ -n "$block" ] || return 1
+  grep -Ei 'tag ruleset' <<<"$block" | grep -Eiq 'owner' &&
+    grep -Eiq 'required reviewer' <<<"$block" &&
+    grep -Eiq 'prevent self-review' <<<"$block" &&
+    grep -Fq 'PRODUCTION_DEPLOY_ENABLED' <<<"$block"
+}
+
+runbook_tag_rules_are_name_patterns() {
+  grep -Ei 'name pattern' "$deploy_runbook" | grep -Ei 'main' | grep -Eiq 'verify'
+}
+
+runbook_documents_deploy_forced() {
+  file_contains "$deploy_runbook" 'infra/deploy/deploy-forced' '/etc/sonora/deploy.env' \
+    SONORA_ROOT IMAGE_REPO MODULES HEALTH_URLS_STAGING HEALTH_URLS_PRODUCTION
+}
+
+runbook_installs_deploy_env_root_owned() {
+  grep -F '/etc/sonora/deploy.env' "$deploy_runbook" | grep -Eiq 'root-owned|owned by root|-o root'
+}
+
+runbook_wrapper_is_not_planned() {
+  ! grep -Ei 'planned' "$deploy_runbook" | grep -Eiq 'wrapper|deploy-forced'
+}
+
+runbook_documents_signal_handling() {
+  grep -Ei 'sighup' "$deploy_runbook" | grep -Ei 'sigpipe' | grep -Eiq 'ignor' &&
+    grep -Ei 'sigterm|sigint' "$deploy_runbook" | grep -Ei 'previous' | grep -Eiq 'restor'
+}
+
+# runbook_documents_deploy_log: one line names $SONORA_ROOT/<env>/deploy.log, says compose or docker output goes
+# there, and says a dropped ssh session therefore does not kill docker.
+runbook_documents_deploy_log() {
+  file_contains "$deploy_runbook" '$SONORA_ROOT/<env>/deploy.log' &&
+    grep -F 'deploy.log' "$deploy_runbook" | grep -Ei 'compose|docker' | grep -Eiq 'ssh'
+}
+
+# config_step_text: the lines of the runbook's config file section, from its heading to the next heading.
+config_step_text() {
+  awk '/^### Config file \/etc\/sonora\/deploy\.env/ { found = 1; next } found && (/^## / || /^### /) { exit } found { print }' "$deploy_runbook"
+}
+
+# runbook_config_creates_deploy_env_before_chown: the config step creates /etc/sonora/deploy.env (cat >, tee or
+# install) on an earlier line than its chown and its chmod.
+runbook_config_creates_deploy_env_before_chown() {
+  local text create chown_line chmod_line
+  text=$(config_step_text)
+  create=$(printf '%s\n' "$text" | grep -nE '(cat +>|tee |install ).*/etc/sonora/deploy\.env' | head -n 1 | cut -d: -f1) || true
+  chown_line=$(printf '%s\n' "$text" | grep -nE 'chown .*/etc/sonora/deploy\.env' | head -n 1 | cut -d: -f1) || true
+  chmod_line=$(printf '%s\n' "$text" | grep -nE 'chmod .*/etc/sonora/deploy\.env' | head -n 1 | cut -d: -f1) || true
+  [ -n "$create" ] && [ -n "$chown_line" ] && [ -n "$chmod_line" ] &&
+    [ "$create" -lt "$chown_line" ] && [ "$create" -lt "$chmod_line" ]
+}
+
+check "no deploy workflow uses the substring( expression, which actionlint rejects" workflows_avoid_substring
+check "actionlint passes on every workflow (rhysd/actionlint 1.7.7, pinned by digest)" actionlint_passes_on_workflows
+check "deploy workflows staging and production never use secrets: inherit" workflows_do_not_inherit_secrets
+check "staging deploy is gated on a push event from this repository, not a fork" staging_deploy_is_gated_on_push_from_this_repo
+check "staging has a verify job that compares workflow_run.head_sha with the tip of main" staging_verify_compares_head_with_main_tip
+check "staging deploy needs the verify job" staging_deploy_needs_verify
+check "production verify job checks the tagged commit is an ancestor of origin/main" production_verify_checks_tag_is_on_main
+check "production verify checkout uses fetch-depth 0 and a sha-pinned action" production_verify_checkout_is_full_and_pinned
+check "production deploy needs the verify job" production_deploy_needs_verify
+check "deploy ssh call uses -F /dev/null, GlobalKnownHostsFile, ConnectTimeout and PasswordAuthentication=no" deploy_ssh_is_hardened
+check "deploy validates DEPLOY_USER with a regex before the ssh call" deploy_user_is_validated_before_ssh
+check "deploy runbook binds the forced command per key: deploy-forced staging and deploy-forced production" runbook_binds_forced_command_per_key
+check "deploy runbook documents the env -i wrapper with root-owned config" runbook_forced_command_runs_under_env_i
+check "deploy runbook sets PermitUserEnvironment no" runbook_sets_permit_user_environment_no
+check "deploy runbook: root-owned scripts, not writable by the deploy user" runbook_scripts_are_root_owned_and_not_writable
+check "deploy runbook: rollback toggles between the last two releases" runbook_rollback_toggles_between_last_two
+check "deploy runbook: both GitHub environments restrict deployment branches and tags" runbook_restricts_both_environments_to_refs
+check "shellcheck passes on infra/deploy/*.sh and deploy-forced (koalaman/shellcheck:v0.10.0 pinned by digest; fails without docker)" shellcheck_passes_on_deploy_scripts
+check "deploy runbook: hard prerequisites before PRODUCTION_DEPLOY_ENABLED are the owner-only tag ruleset and the required reviewer with prevent self-review" runbook_production_prerequisites
+check "deploy runbook: environment tag rules are name patterns and cannot check that a tag is on main, the verify job does" runbook_tag_rules_are_name_patterns
+check "deploy runbook documents infra/deploy/deploy-forced and the /etc/sonora/deploy.env keys" runbook_documents_deploy_forced
+check "deploy runbook installs /etc/sonora/deploy.env root-owned" runbook_installs_deploy_env_root_owned
+check "deploy runbook no longer says the wrapper is planned" runbook_wrapper_is_not_planned
+check "deploy runbook: SIGHUP and SIGPIPE are ignored, SIGTERM and SIGINT restore the previous release" runbook_documents_signal_handling
+check "deploy runbook documents \$SONORA_ROOT/<env>/deploy.log: compose output goes there, so a dropped ssh session does not kill docker" runbook_documents_deploy_log
+check "deploy runbook config step creates /etc/sonora/deploy.env (cat >, tee or install) before its chown and chmod" runbook_config_creates_deploy_env_before_chown
+
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"
   exit 1
