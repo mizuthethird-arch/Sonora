@@ -1,6 +1,6 @@
 # Deploy runbook
 
-Status: **planned, not built.** The deploy workflows (`.github/workflows/deploy.yml`, `staging.yml`, `production.yml`) and the deploy scripts in `infra/deploy` are in the repository. Nothing in this runbook has run on a VPS yet. The VPS, the deploy user, the SSH keys, the GitHub environments and their secrets and variables, the `migrate` compose service, the `web`, `worker` and `realtime` roles, and `/health/ready` do not exist yet. T015.02 to T015.10 build them. Each step below is marked `[not run]` until its check passes on a real VPS.
+Status: the repository side is in the repository: the deploy workflows (`.github/workflows/deploy.yml`, `staging.yml`, `production.yml`), the deploy scripts and the forced-command wrapper in `infra/deploy`. The VPS side is not built and is not verified on a VPS. Nothing in this runbook has run on a VPS yet. The VPS, the deploy user, the SSH keys, the GitHub environments and their secrets and variables, the `migrate` compose service, the `web`, `worker` and `realtime` roles, and `/health/ready` do not exist yet. T015.02 to T015.10 build them. Each step below is marked `[not run]` until its check passes on a real VPS.
 
 Blocked until: T005 (domain, DNS and mail) is done, and the VPS and the staging and production secrets exist.
 
@@ -13,10 +13,21 @@ Blocked until: T005 (domain, DNS and mail) is done, and the VPS and the staging 
 
 Production deploys follow the promotion rule: `dev` → `main` is a pull request with `approved: <task id>` from the owner (branching rule M4). Staging gets `main` automatically.
 
-GitHub environment rules (repository settings, `[not run]`):
+## Hard prerequisites before PRODUCTION_DEPLOY_ENABLED
+
+Do not set `PRODUCTION_DEPLOY_ENABLED` to `true` until both of these are in place. `[not run]`
+
+1. Owner-only tag ruleset: a repository tag ruleset for `v*` that only the owner can create or update. A tag push runs the workflow files from the tagged commit, so this ruleset is what keeps arbitrary tags out of production.
+2. Required reviewer: the `production` environment names the owner as a required reviewer, with prevent self-review on.
+
+GitHub environment tag rules are name patterns: they cannot check that a tag is on `main`. The production verify job does that check.
+
+## GitHub environment rules
+
+Repository settings, `[not run]`:
 
 - Environment `staging` restricts deployment branches to `main`.
-- Environment `production` restricts deployment tags to `v*` on `main`, and requires the owner as a reviewer with prevent self-review. A tag ruleset also restricts who can create `v*` tags. `[not run]`
+- Environment `production` restricts deployment tags to `v*`. The owner-only tag ruleset and the verify job described above complete the restriction.
 
 Both workflows call the same reusable job, `.github/workflows/deploy.yml`, with `environment` set to `staging` or `production`. The job runs in that GitHub environment, so it reads only that environment's secrets and variables. Deploys to one environment are queued, never cancelled (`concurrency` group `deploy-<environment>`). `[not run]`
 
@@ -26,7 +37,7 @@ Create these in repository settings. Names only; no values belong in this file.
 
 - Repository variables (Settings → Secrets and variables → Actions → Variables):
   - `STAGING_DEPLOY_ENABLED`: set to `true` to turn on the staging deploy. `[not run]`
-  - `PRODUCTION_DEPLOY_ENABLED`: set to `true` to turn on the production deploy. `[not run]`
+  - `PRODUCTION_DEPLOY_ENABLED`: set to `true` to turn on the production deploy, only after the hard prerequisites above. `[not run]`
 - Environment `staging`:
   - secret `DEPLOY_SSH_KEY`: the staging deploy private key. `[not run]`
   - secret `DEPLOY_KNOWN_HOSTS`: the VPS host public key lines, checked out of band. `[not run]`
@@ -45,11 +56,52 @@ command="/srv/sonora/bin/deploy-forced production",restrict ssh-ed25519 AAAA... 
 
 The `restrict` option turns off port forwarding, agent forwarding, the PTY and the other extras. The command argument binds the key to one environment: the key may only run `deploy up` and `deploy rollback` for that environment, and the wrapper refuses any other command or environment. `[not run]`
 
-The wrapper `/srv/sonora/bin/deploy-forced` runs the deploy script through `env -i`, so nothing from the caller's environment reaches it. The variables it needs (SONORA_ROOT, IMAGE_REPO, HEALTH_URLS, MODULES) are read from a root-owned config file, not from the caller, so the caller cannot override the gate. `[not run]`
+### Install the scripts as root
+
+The wrapper `infra/deploy/deploy-forced` ships in the repository. Nothing needs to be written. Install it, with the two scripts it uses, from a checkout of the repository on the VPS, as root:
+
+```bash
+sudo install -d -o root -g root -m 0755 /srv/sonora/bin
+sudo install -o root -g root -m 0755 infra/deploy/deploy-forced infra/deploy/forced-command.sh infra/deploy/deploy.sh /srv/sonora/bin/
+```
+
+Run the install again after every change to these scripts. `[not run]`
+
+### Config file /etc/sonora/deploy.env
+
+The wrapper reads its settings from `/etc/sonora/deploy.env`, which is root-owned (root:root, mode 0644). Create the directory and the file as root, then set the owner and mode:
+
+```bash
+sudo install -d -o root -g root -m 0755 /etc/sonora
+sudo chown root:root /etc/sonora/deploy.env
+sudo chmod 0644 /etc/sonora/deploy.env
+```
+
+The file holds these keys. The values below use placeholder hosts only and no secrets:
+
+```
+SONORA_ROOT=/srv/sonora
+IMAGE_REPO=registry.example.test/sonora
+# MODULES is optional. When unset, deploy.sh uses its default module list.
+# MODULES=identity catalog media playback library search recommender realtime notification analytics platform
+HEALTH_URLS_STAGING=https://staging.example.test/health/ready
+HEALTH_URLS_PRODUCTION=https://www.example.test/health/ready
+```
+
+- `SONORA_ROOT`: the directory that holds `<env>/docker-compose.yml` and `<env>/releases.log`.
+- `IMAGE_REPO`: the image repository the `sha-<short>` tags come from.
+- `MODULES`: optional, a space-separated module list.
+- `HEALTH_URLS_STAGING` and `HEALTH_URLS_PRODUCTION`: space-separated `/health/ready` URLs, one per process role. The wrapper passes the list for its environment to `deploy.sh`.
+
+The wrapper parses this file as data. It reads `KEY=value` lines and never sources or executes it. Values may use only letters, digits and `. _ : / @ , -`, with spaces between list items; a value outside that set is refused. `[not run]`
+
+The wrapper runs the deploy script through `env -i`, so nothing from the caller's environment reaches it. The variables it needs are read from the root-owned config file `/etc/sonora/deploy.env`, not from the caller, so the caller cannot override the gate. `[not run]`
+
+The wrapper also reads a `DEPLOY_CONFIG` path override. That override exists for the tests only. On the VPS it must never be set, which is why sshd must not accept it from a client (see the host settings below).
 
 Host settings on the VPS (`[not run]`):
 
-- sshd: `PermitUserEnvironment no`, and `AcceptEnv` restricted to `LANG` and `LC_*`.
+- sshd: `PermitUserEnvironment no`, and `AcceptEnv` restricted to `LANG` and `LC_*`. With this, a client cannot set `DEPLOY_CONFIG` or any other variable the wrapper would read.
 - The scripts under `/srv/sonora/bin` are root-owned scripts, and they are not writable by the deploy user.
 - The deploy user is in the `docker` group. Docker access is root-equivalent, so the deploy key is the highest-value credential here: keep one key per environment, and rotate each key on a schedule and whenever a key or the host changes.
 - `/srv/sonora/<env>/releases.log` is owned by the deploy user, mode 0640.
@@ -70,12 +122,19 @@ The VPS side of the scripts is `[not run]` until T015.02 to T015.10 are done.
 
 `api`, `worker`, `media-worker`, `realtime` and `web`, all from one image tagged `sha-<short>`, plus the one-off `migrate` container. The image is built once and promoted (rule P3). `[not run]`
 
+## Signals, lock and health gate
+
+- `deploy.sh` ignores SIGHUP and SIGPIPE, so a dropped ssh session does not kill a deploy in progress. `[not run]`
+- SIGTERM and SIGINT restore the previous release (no migrations, no log entry) and release the lock. `[not run]`
+- The lock is `<env>/.deploy.lock`, a directory holding the owner's pid. A lock whose pid is not a running process is stale and is taken over. A lock with no pid is treated as live while it is younger than 5 seconds, because another deploy may still be between creating it and writing the pid. An older lock with no pid is stale. `[not run]`
+- The health gate accepts only HTTP 200. Redirects and 204 are unhealthy. `[not run]`
+
 ## Deploy order
 
 1. Run migrations first, one `migrate` container per module: `docker compose run --rm migrate`. Abort the deploy if any container exits non-zero. Migrations are expand-only, so the previous release keeps working on the new schema (rule O3). `[not run]`
 2. Pull the `sha-<short>` image on the VPS. `[not run]`
 3. Run `docker compose up -d` for `api`, `worker`, `media-worker`, `realtime` and `web`. `[not run]`
-4. Health gate: poll `/health/ready` on every process role every 5 seconds for 120 seconds, through staging Traefik. A failed gate redeploys the previous tag. `[not run]`
+4. Health gate: poll `/health/ready` on every process role every 5 seconds for 120 seconds, through staging Traefik. Only HTTP 200 passes. A failed gate redeploys the previous tag. `[not run]`
 
 ## Staging on a successful ci run on main
 
@@ -87,8 +146,8 @@ The VPS side of the scripts is `[not run]` until T015.02 to T015.10 are done.
 
 ## Production on tag vX.Y.Z
 
-1. Tag the release `vX.Y.Z` on `main` (`git tag vX.Y.Z` then push the tag). The image for that commit must already exist from the `main` push. `[not run]`
-2. The verify job checks that the tagged commit is an ancestor of `origin/main`, and fails otherwise. `[not run]`
+1. Tag the release `vX.Y.Z` on `main` (`git tag vX.Y.Z` then push the tag). The image for that commit must already exist from the `main` push. The owner-only tag ruleset must be in place first. `[not run]`
+2. The verify job checks that the tagged commit is an ancestor of `origin/main`, and fails otherwise. This is the check that keeps a tag off other branches. `[not run]`
 3. The production workflow waits at the `production` environment for the owner's approval, when `PRODUCTION_DEPLOY_ENABLED` is `true`. `[not run]`
 4. Migrations, deploy and health gate run as in staging. The tag deployed is `sha-<first 7 characters of the tagged commit>`. `[not run]`
 5. Record the tag in `/srv/sonora/production/releases.log`. `[not run]`

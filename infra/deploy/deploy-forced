@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Environment-bound SSH forced command: deploy-forced <staging|production>.
+# Reads settings from DEPLOY_CONFIG (default /etc/sonora/deploy.env) as data, never sourced: one
+# KEY=VALUE per line; blank lines and lines starting with # are skipped. Allowed keys are
+# SONORA_ROOT, IMAGE_REPO, MODULES, HEALTH_URLS_STAGING and HEALTH_URLS_PRODUCTION, each at most
+# once, with values of [A-Za-z0-9._:/ ,@-] only. Any problem exits 126 with
+# 'deploy-forced: rejected' and runs nothing. Otherwise it execs forced-command.sh next to this
+# file in an empty environment that holds only the settings above and SSH_ORIGINAL_COMMAND.
+set -euo pipefail
+
+CONFIG_FILE="${DEPLOY_CONFIG:-/etc/sonora/deploy.env}"
+VALUE_RE='^[A-Za-z0-9._:/ ,@-]*$'
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cfg_sonora_root=""
+cfg_image_repo=""
+cfg_modules=""
+cfg_health_staging=""
+cfg_health_production=""
+
+# reject REASON: refuses the request with exit 126; nothing runs.
+reject() {
+  printf 'deploy-forced: rejected: %s\n' "$1" >&2 || true
+  exit 126
+}
+
+# valid_env ENV: succeeds only for staging and production.
+valid_env() {
+  case "$1" in
+    staging | production) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# load_config: reads CONFIG_FILE line by line into the cfg_ variables. Every line must be blank, a
+# comment, or an allowed KEY=VALUE with a safe value, and no key may repeat.
+load_config() {
+  local line key value seen=" "
+  [ -r "$CONFIG_FILE" ] || reject "config file not readable"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      '' | '#'*) continue ;;
+      *=*) ;;
+      *) reject "malformed config line" ;;
+    esac
+    key=${line%%=*}
+    value=${line#*=}
+    case "$seen" in
+      *" $key "*) reject "repeated config key" ;;
+    esac
+    seen="$seen$key "
+    [[ $value =~ $VALUE_RE ]] || reject "unsafe value in config"
+    case "$key" in
+      SONORA_ROOT) cfg_sonora_root=$value ;;
+      IMAGE_REPO) cfg_image_repo=$value ;;
+      MODULES) cfg_modules=$value ;;
+      HEALTH_URLS_STAGING) cfg_health_staging=$value ;;
+      HEALTH_URLS_PRODUCTION) cfg_health_production=$value ;;
+      *) reject "unknown config key" ;;
+    esac
+  done <"$CONFIG_FILE"
+}
+
+# health_urls_for ENV: the HEALTH_URLS list configured for ENV.
+health_urls_for() {
+  case "$1" in
+    staging) printf '%s' "$cfg_health_staging" ;;
+    production) printf '%s' "$cfg_health_production" ;;
+  esac
+}
+
+main() {
+  local env="${1:-}" health
+  local -a envs
+  [ $# -eq 1 ] || reject "expected exactly one environment"
+  valid_env "$env" || reject "unknown environment"
+  load_config
+  [ -n "$cfg_sonora_root" ] || reject "SONORA_ROOT missing"
+  [ -n "$cfg_image_repo" ] || reject "IMAGE_REPO missing"
+  health=$(health_urls_for "$env")
+  [ -n "$health" ] || reject "HEALTH_URLS for $env missing"
+  envs=(
+    "PATH=/usr/local/bin:/usr/bin:/bin"
+    "SONORA_ROOT=$cfg_sonora_root"
+    "IMAGE_REPO=$cfg_image_repo"
+    "HEALTH_URLS=$health"
+  )
+  if [ -n "$cfg_modules" ]; then
+    envs+=("MODULES=$cfg_modules")
+  fi
+  exec /usr/bin/env -i "${envs[@]}" "SSH_ORIGINAL_COMMAND=${SSH_ORIGINAL_COMMAND:-}" \
+    "$script_dir/forced-command.sh" "$env"
+}
+
+main "$@"

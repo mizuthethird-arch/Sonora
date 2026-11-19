@@ -4,13 +4,12 @@
 # Allows exactly two shapes of SSH_ORIGINAL_COMMAND, and only for that environment:
 #   deploy up <env> <tag>
 #   deploy rollback <env>
-# Anything else exits 126 and runs nothing. Allowed commands exec DEPLOY_SCRIPT
-# (default: deploy.sh next to this file) with the arguments after "deploy".
+# Anything else exits 126 and runs nothing. Allowed commands exec the deploy.sh next to this
+# file with the arguments after "deploy".
 set -euo pipefail
 
 ALLOWED_RE='^deploy (up (staging|production) (sha-[0-9a-f]{7,40}|v[0-9]+\.[0-9]+\.[0-9]+)|rollback (staging|production))$'
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-DEPLOY_SCRIPT="${DEPLOY_SCRIPT:-$script_dir/deploy.sh}"
 
 # reject: refuses the command with exit 126; nothing runs.
 reject() {
@@ -41,7 +40,7 @@ main() {
   if [ "${words[2]}" != "$bound_env" ]; then
     reject
   fi
-  exec "$DEPLOY_SCRIPT" "${words[@]:1}"
+  exec "$script_dir/deploy.sh" "${words[@]:1}"
 }
 
 main "$@"

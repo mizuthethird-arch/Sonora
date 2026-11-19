@@ -886,7 +886,7 @@ case_deploy_forced_rejects_missing_required_keys() {
   write_deploy_config "SONORA_ROOT=$W/root" 'IMAGE_REPO=registry.example.test/sonora' &&
     run_deploy_forced staging && expect_rejected "HEALTH_URLS_STAGING missing" || return 1
   write_deploy_config "SONORA_ROOT=$W/root" 'IMAGE_REPO=registry.example.test/sonora' \
-    'HEALTH_URLS_PRODUCTION=http://127.0.0.1:9/production/ready' &&
+    'HEALTH_URLS_STAGING=http://127.0.0.1:9/staging/ready' &&
     export SSH_ORIGINAL_COMMAND='deploy rollback production' &&
     run_deploy_forced production && expect_rejected "HEALTH_URLS_PRODUCTION missing for production" || return 1
 }
