@@ -1096,6 +1096,53 @@ runbook_restricts_both_environments_to_refs() {
     grep -Ei 'deployment (branch|tag)' "$deploy_runbook" | grep -Eiq 'production'
 }
 
+shellcheck_image='koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb'
+
+# shellcheck_passes_on_deploy_scripts: the pinned shellcheck image lints every deploy script. Fails when docker is missing.
+shellcheck_passes_on_deploy_scripts() {
+  command -v docker >/dev/null 2>&1 || return 1
+  docker run --rm -v "$PWD:/repo" -w /repo "$shellcheck_image" infra/deploy/*.sh infra/deploy/deploy-forced
+}
+
+# runbook_prerequisite_block: the lines from "hard prerequisite" on, twelve at most.
+runbook_prerequisite_block() {
+  awk 'tolower($0) ~ /hard prerequisite/ { found = 1 } found { print; if (++n >= 12) exit }' "$deploy_runbook"
+}
+
+# runbook_production_prerequisites: the hard prerequisites before PRODUCTION_DEPLOY_ENABLED name the
+# owner-only tag ruleset and the required reviewer with prevent self-review.
+runbook_production_prerequisites() {
+  local block
+  block=$(runbook_prerequisite_block)
+  [ -n "$block" ] || return 1
+  grep -Ei 'tag ruleset' <<<"$block" | grep -Eiq 'owner' &&
+    grep -Eiq 'required reviewer' <<<"$block" &&
+    grep -Eiq 'prevent self-review' <<<"$block" &&
+    grep -Fq 'PRODUCTION_DEPLOY_ENABLED' <<<"$block"
+}
+
+runbook_tag_rules_are_name_patterns() {
+  grep -Ei 'name pattern' "$deploy_runbook" | grep -Ei 'main' | grep -Eiq 'verify'
+}
+
+runbook_documents_deploy_forced() {
+  file_contains "$deploy_runbook" 'infra/deploy/deploy-forced' '/etc/sonora/deploy.env' \
+    SONORA_ROOT IMAGE_REPO MODULES HEALTH_URLS_STAGING HEALTH_URLS_PRODUCTION
+}
+
+runbook_installs_deploy_env_root_owned() {
+  grep -F '/etc/sonora/deploy.env' "$deploy_runbook" | grep -Eiq 'root-owned|owned by root|-o root'
+}
+
+runbook_wrapper_is_not_planned() {
+  ! grep -Ei 'planned' "$deploy_runbook" | grep -Eiq 'wrapper|deploy-forced'
+}
+
+runbook_documents_signal_handling() {
+  grep -Ei 'sighup' "$deploy_runbook" | grep -Ei 'sigpipe' | grep -Eiq 'ignor' &&
+    grep -Ei 'sigterm|sigint' "$deploy_runbook" | grep -Ei 'previous' | grep -Eiq 'restor'
+}
+
 check "no deploy workflow uses the substring( expression, which actionlint rejects" workflows_avoid_substring
 check "actionlint passes on every workflow (rhysd/actionlint 1.7.7, pinned by digest)" actionlint_passes_on_workflows
 check "deploy workflows staging and production never use secrets: inherit" workflows_do_not_inherit_secrets
@@ -1113,6 +1160,13 @@ check "deploy runbook sets PermitUserEnvironment no" runbook_sets_permit_user_en
 check "deploy runbook: root-owned scripts, not writable by the deploy user" runbook_scripts_are_root_owned_and_not_writable
 check "deploy runbook: rollback toggles between the last two releases" runbook_rollback_toggles_between_last_two
 check "deploy runbook: both GitHub environments restrict deployment branches and tags" runbook_restricts_both_environments_to_refs
+check "shellcheck passes on infra/deploy/*.sh and deploy-forced (koalaman/shellcheck:v0.10.0 pinned by digest; fails without docker)" shellcheck_passes_on_deploy_scripts
+check "deploy runbook: hard prerequisites before PRODUCTION_DEPLOY_ENABLED are the owner-only tag ruleset and the required reviewer with prevent self-review" runbook_production_prerequisites
+check "deploy runbook: environment tag rules are name patterns and cannot check that a tag is on main, the verify job does" runbook_tag_rules_are_name_patterns
+check "deploy runbook documents infra/deploy/deploy-forced and the /etc/sonora/deploy.env keys" runbook_documents_deploy_forced
+check "deploy runbook installs /etc/sonora/deploy.env root-owned" runbook_installs_deploy_env_root_owned
+check "deploy runbook no longer says the wrapper is planned" runbook_wrapper_is_not_planned
+check "deploy runbook: SIGHUP and SIGPIPE are ignored, SIGTERM and SIGINT restore the previous release" runbook_documents_signal_handling
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures check(s) failed"
