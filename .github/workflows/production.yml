@@ -1,8 +1,10 @@
 name: production
 
 # Deploys the image of a version tag (vX.Y.Z on main) to the production VPS.
-# The GitHub "production" environment holds the owner approval rule; it is set in repository settings.
 # Turned on by the repository variable PRODUCTION_DEPLOY_ENABLED.
+# Set in GitHub settings, not in this file:
+# - a tag ruleset that restricts who can create v* tags to the owner
+# - the "production" environment: required reviewers with prevent self-review, and a deployment-tags rule for v* tags on main
 
 on:
   push:
@@ -12,10 +14,32 @@ permissions:
   contents: read
 
 jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check that the tagged commit is on main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::the tagged commit is not on main, so it is not deployed"
+            exit 1
+          fi
+      - name: Name the image tag from the tagged commit
+        id: tag
+        run: echo "tag=sha-${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
   deploy:
+    needs: verify
     if: vars.PRODUCTION_DEPLOY_ENABLED == 'true'
     uses: ./.github/workflows/deploy.yml
     with:
       environment: production
-      tag: sha-${{ substring(github.sha, 0, 7) }}
-    secrets: inherit
+      tag: ${{ needs.verify.outputs.tag }}
